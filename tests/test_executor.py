@@ -1,5 +1,5 @@
-from relay.config import WorkflowConfig, WorkflowStep
-from relay.executor import build_workflow_prompts, run_workflow
+from aethr.config import WorkflowConfig, WorkflowStep
+from aethr.executor import build_workflow_prompts, run_workflow
 
 
 def test_run_workflow_returns_mock_step_results() -> None:

@@ -1,4 +1,4 @@
-"""Command-line interface for Relay."""
+"""Command-line interface for Aethr."""
 
 from typing import Annotated
 
@@ -6,11 +6,11 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from relay import __version__
-from relay.config import CONFIG_FILE, ConfigError, load_workflow_config
-from relay.executor import StepPrompt, StepResult, build_workflow_prompts, run_workflow
-from relay.llm import LLMError
-from relay.workflow import WorkflowTemplateError, available_workflows, init_workflow
+from aethr import __version__
+from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
+from aethr.executor import StepPrompt, StepResult, build_workflow_prompts, run_workflow
+from aethr.llm import LLMError
+from aethr.workflow import WorkflowTemplateError, available_workflows, init_workflow
 
 
 app = typer.Typer(help="Explicit, reproducible AI coding workflows.")
@@ -19,13 +19,13 @@ console = Console()
 
 @app.callback()
 def main() -> None:
-    """Relay command group."""
+    """Aethr command group."""
 
 
 @app.command()
 def init(
     preset: Annotated[str | None, typer.Argument(help="Workflow preset to initialize.")] = None,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite an existing .relay.yaml.")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite an existing .aethr.yaml.")] = False,
     list_only: Annotated[bool, typer.Option("--list", "-l", help="List available workflow presets.")] = False,
 ) -> None:
     """Initialize a workflow config from a built-in YAML preset."""
@@ -62,11 +62,11 @@ def run(
 ) -> None:
     """Run the configured sequential workflow."""
 
-    console.print(Panel.fit(task, title="Relay Task", border_style="cyan"))
+    console.print(Panel.fit(task, title="Aethr Task", border_style="cyan"))
     try:
         config = load_workflow_config()
     except ConfigError as exc:
-        raise typer.BadParameter(f"{exc}. Run 'relay init' to create {CONFIG_FILE}.") from exc
+        raise typer.BadParameter(f"{exc}. Run 'aethr init' to create {CONFIG_FILE}.") from exc
 
     console.print(f"[bold]Workflow[/bold] {config.workflow}")
     if show_prompt:
@@ -85,9 +85,9 @@ def run(
 
 @app.command()
 def version() -> None:
-    """Print the Relay version."""
+    """Print the Aethr version."""
 
-    console.print(f"Relay {__version__}")
+    console.print(f"Aethr {__version__}")
 
 
 def _print_step_result(result: StepResult) -> None:

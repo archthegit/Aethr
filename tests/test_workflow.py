@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from relay.workflow import WorkflowTemplateError, available_workflows, init_workflow
+from aethr.workflow import WorkflowTemplateError, available_workflows, init_workflow
 
 
 def test_available_workflows_includes_core_presets() -> None:
@@ -17,7 +17,7 @@ def test_available_workflows_includes_core_presets() -> None:
 
 
 def test_init_workflow_refuses_overwrite_without_force(tmp_path: Path) -> None:
-    destination = tmp_path / ".relay.yaml"
+    destination = tmp_path / ".aethr.yaml"
     destination.write_text("existing: true\n", encoding="utf-8")
 
     with pytest.raises(WorkflowTemplateError, match="already exists"):
@@ -27,7 +27,7 @@ def test_init_workflow_refuses_overwrite_without_force(tmp_path: Path) -> None:
 
 
 def test_init_workflow_overwrites_with_force(tmp_path: Path) -> None:
-    destination = tmp_path / ".relay.yaml"
+    destination = tmp_path / ".aethr.yaml"
     destination.write_text("existing: true\n", encoding="utf-8")
 
     init_workflow("custom", destination=destination, force=True)

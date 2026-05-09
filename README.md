@@ -1,4 +1,4 @@
-# Relay
+# Aethr
 
 A tiny CLI for running explicit AI coding workflows from YAML.
 
@@ -12,18 +12,18 @@ Real development is:
 plan -> implement -> review -> iterate
 ```
 
-Relay makes those workflows programmable. A run is just:
+Aethr makes those workflows programmable. A run is just:
 
 ```text
 task + workflow + explicit context + model routing
 ```
 
-Relay is stateless. The only project file it creates is `.relay.yaml`.
+Aethr is stateless. The only project file it creates is `.aethr.yaml`.
 
 ## Install
 
 ```bash
-pip install relay-ai
+pip install aethr
 ```
 
 For local development:
@@ -35,18 +35,18 @@ pip install -e ".[dev]"
 ## Quickstart
 
 ```bash
-relay init review-existing-diff
-relay run "review my current changes before I commit"
+aethr init review-existing-diff
+aethr run "review my current changes before I commit"
 ```
 
-Relay copies a YAML preset into `.relay.yaml`. Edit it like any other project
+Aethr copies a YAML preset into `.aethr.yaml`. Edit it like any other project
 file.
 
-## How Relay Works
+## How Aethr Works
 
 - **Task**: the instruction passed on the command line.
 - **Workflow**: the YAML file that defines ordered steps.
-- **Steps**: sequential units of work. Relay runs them in order.
+- **Steps**: sequential units of work. Aethr runs them in order.
 - **Roles**: named responsibilities such as `planner`, `reviewer`, or `writer`.
 - **Context**: explicit repo input declared per step.
 - **Model routing**: each role can point at a different LiteLLM model.
@@ -84,13 +84,13 @@ steps:
 List presets:
 
 ```bash
-relay init --list
+aethr init --list
 ```
 
 Initialize another preset:
 
 ```bash
-relay init docs-sync --force
+aethr init docs-sync --force
 ```
 
 ## Examples
@@ -103,7 +103,7 @@ The `examples/` directory contains small workflow files you can copy from:
 
 ## Explicit Context
 
-Relay uses explicit context instead of automatic retrieval. That keeps runs easy
+Aethr uses explicit context instead of automatic retrieval. That keeps runs easy
 to understand: the YAML shows exactly what each step can see.
 
 Supported context sources:
@@ -130,34 +130,34 @@ clear placeholder notes in the prompt.
 
 ## Prompt Previewing
 
-Use `--show-prompt` to see exactly what Relay would send to each model:
+Use `--show-prompt` to see exactly what Aethr would send to each model:
 
 ```bash
-relay run "review my current changes before I commit" --show-prompt
+aethr run "review my current changes before I commit" --show-prompt
 ```
 
-Relay does not call models in prompt preview mode. For later steps, it uses a
+Aethr does not call models in prompt preview mode. For later steps, it uses a
 clear placeholder where real previous step output would appear.
 
 ## Mock Mode
 
-Relay works without API keys by returning deterministic mock responses.
+Aethr works without API keys by returning deterministic mock responses.
 
-Use the models configured in `.relay.yaml`:
+Use the models configured in `.aethr.yaml`:
 
 ```bash
-RELAY_LIVE=1 relay run "review my current changes"
+AETHR_LIVE=1 aethr run "review my current changes"
 ```
 
 Override every configured model with one LiteLLM model:
 
 ```bash
-RELAY_MODEL=openai:gpt-5.5 relay run "review my current changes"
+AETHR_MODEL=openai:gpt-5.5 aethr run "review my current changes"
 ```
 
 ## Philosophy
 
-Relay should feel like:
+Aethr should feel like:
 
 - `git`
 - `pytest`
@@ -170,14 +170,14 @@ It should not feel like:
 - an autonomous coding platform
 - an AI operating system
 
-Relay intentionally avoids persistence, replay systems, caches, plugins, DAGs,
+Aethr intentionally avoids persistence, replay systems, caches, plugins, DAGs,
 async runtimes, vector search, automatic retrieval, memory systems, and agent
 abstractions.
 
 ## Architecture
 
 ```text
-relay/
+aethr/
   cli.py
   config.py
   context.py

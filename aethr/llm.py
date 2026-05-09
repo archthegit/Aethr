@@ -1,7 +1,7 @@
 """A tiny model-call wrapper around LiteLLM.
 
-Relay defaults to mock responses so workflows are runnable without API keys.
-Set RELAY_LIVE=1 to use workflow models, or RELAY_MODEL to override all roles.
+Aethr defaults to mock responses so workflows are runnable without API keys.
+Set AETHR_LIVE=1 to use workflow models, or AETHR_MODEL to override all roles.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ class ModelClient:
     """Minimal model client used by workflow steps."""
 
     def __init__(self, model: str | None = None) -> None:
-        self.model = os.getenv("RELAY_MODEL") or model
-        self.live = os.getenv("RELAY_LIVE") == "1" or os.getenv("RELAY_MODEL") is not None
+        self.model = os.getenv("AETHR_MODEL") or model
+        self.live = os.getenv("AETHR_LIVE") == "1" or os.getenv("AETHR_MODEL") is not None
 
     def complete(self, prompt: str) -> str:
         """Return a model completion for a prompt.
@@ -48,5 +48,5 @@ class ModelClient:
         return (
             "Mock model response.\n\n"
             f"Prompt: {first_line}\n\n"
-            "This placeholder keeps Relay runnable without credentials."
+            "This placeholder keeps Aethr runnable without credentials."
         )

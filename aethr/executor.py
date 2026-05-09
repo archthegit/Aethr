@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from relay.config import WorkflowConfig, WorkflowStep
-from relay.context import collect_context
-from relay.llm import ModelClient
-from relay.prompts import step_prompt
+from aethr.config import WorkflowConfig, WorkflowStep
+from aethr.context import collect_context
+from aethr.llm import ModelClient
+from aethr.prompts import step_prompt
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-from relay.context import collect_context
+from aethr.context import collect_context
 
 
 def test_collect_context_reads_file_and_missing_file(tmp_path: Path) -> None:

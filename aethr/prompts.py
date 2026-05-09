@@ -1,6 +1,6 @@
-"""Prompt builders for configured Relay workflow steps."""
+"""Prompt builders for configured Aethr workflow steps."""
 
-from relay.config import WorkflowStep
+from aethr.config import WorkflowStep
 
 
 ROLE_INSTRUCTIONS = {
@@ -45,7 +45,7 @@ def step_prompt(
 
     role_instruction = ROLE_INSTRUCTIONS.get(step.role, ROLE_INSTRUCTIONS["worker"])
     role_context = f"\nWorkflow role guidance:\n{role_description}\n" if role_description else ""
-    return f"""You are the {step.role} step in a Relay coding workflow.
+    return f"""You are the {step.role} step in an Aethr coding workflow.
 {role_context}
 Role-specific instructions:
 {role_instruction}

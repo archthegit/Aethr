@@ -5,10 +5,10 @@ from __future__ import annotations
 from importlib import resources
 from pathlib import Path
 
-from relay.config import CONFIG_FILE
+from aethr.config import CONFIG_FILE
 
 
-WORKFLOW_PACKAGE = "relay.workflows"
+WORKFLOW_PACKAGE = "aethr.workflows"
 
 
 class WorkflowTemplateError(Exception):

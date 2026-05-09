@@ -1,5 +1,5 @@
-from relay.config import WorkflowStep
-from relay.prompts import step_prompt
+from aethr.config import WorkflowStep
+from aethr.prompts import step_prompt
 
 
 def test_step_prompt_includes_role_specific_instructions() -> None:

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from relay.config import ConfigError, load_workflow_config
+from aethr.config import ConfigError, load_workflow_config
 
 
 def write_config(path: Path, text: str) -> Path:
@@ -12,7 +12,7 @@ def write_config(path: Path, text: str) -> Path:
 
 def test_load_workflow_config_rejects_unknown_keys(tmp_path: Path) -> None:
     config_path = write_config(
-        tmp_path / ".relay.yaml",
+        tmp_path / ".aethr.yaml",
         """
 workflow: typo-test
 roles:
@@ -33,7 +33,7 @@ review_looop:
 
 def test_load_workflow_config_rejects_step_with_undefined_role(tmp_path: Path) -> None:
     config_path = write_config(
-        tmp_path / ".relay.yaml",
+        tmp_path / ".aethr.yaml",
         """
 workflow: missing-role
 roles:
@@ -52,7 +52,7 @@ steps:
 
 def test_load_workflow_config_rejects_model_for_undefined_role(tmp_path: Path) -> None:
     config_path = write_config(
-        tmp_path / ".relay.yaml",
+        tmp_path / ".aethr.yaml",
         """
 workflow: bad-model-route
 roles:
@@ -71,7 +71,7 @@ steps:
 
 def test_load_workflow_config_accepts_step_context(tmp_path: Path) -> None:
     config_path = write_config(
-        tmp_path / ".relay.yaml",
+        tmp_path / ".aethr.yaml",
         """
 workflow: context-test
 roles:

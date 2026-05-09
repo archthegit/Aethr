@@ -8,7 +8,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
-CONFIG_FILE = ".relay.yaml"
+CONFIG_FILE = ".aethr.yaml"
 
 
 class ConfigError(Exception):
@@ -16,7 +16,7 @@ class ConfigError(Exception):
 
 
 class WorkflowStep(BaseModel):
-    """One sequential step in a Relay workflow."""
+    """One sequential step in an Aethr workflow."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -26,7 +26,7 @@ class WorkflowStep(BaseModel):
 
 
 class WorkflowConfig(BaseModel):
-    """A YAML-defined Relay workflow."""
+    """A YAML-defined Aethr workflow."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -55,7 +55,7 @@ class WorkflowConfig(BaseModel):
 
 
 def load_workflow_config(path: Path | str = CONFIG_FILE) -> WorkflowConfig:
-    """Load and validate a Relay workflow config file."""
+    """Load and validate an Aethr workflow config file."""
 
     config_path = Path(path)
     if not config_path.exists():
