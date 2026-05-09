@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "relay-ai"
+version = "0.1.0"
+description = "A lightweight CLI for explicit, reproducible AI coding workflows."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+  { name = "Archana Pradeep" }
+]
+dependencies = [
+  "litellm>=1.60.0",
+  "pydantic>=2.10.0",
+  "pyyaml>=6.0.2",
+  "rich>=13.9.0",
+  "typer>=0.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+relay = "relay.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["relay"]
+artifacts = [
+  "relay/workflows/*.yaml",
+]

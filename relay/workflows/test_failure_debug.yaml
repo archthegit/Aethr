@@ -1,0 +1,23 @@
+workflow: test-failure-debug
+
+roles:
+  debugger: Diagnose failing tests and propose the smallest useful fix.
+  reviewer: Review the diagnosis and proposed fix for correctness.
+
+models:
+  debugger: anthropic:claude-sonnet
+  reviewer: openai:gpt-5.5
+
+steps:
+  - id: diagnose
+    role: debugger
+
+  - id: propose-fix
+    role: debugger
+
+  - id: review
+    role: reviewer
+
+review_loop:
+  enabled: true
+  max_iterations: 2

@@ -1,0 +1,15 @@
+workflow: review-existing-diff
+
+roles:
+  reviewer: Review the provided task context as if it were an existing diff.
+
+models:
+  reviewer: openai:gpt-5.5
+
+steps:
+  - id: review
+    role: reviewer
+
+review_loop:
+  enabled: false
+  max_iterations: 1
