@@ -1,0 +1,24 @@
+workflow: docs-sync
+
+roles:
+  writer: Synchronize documentation with the current code or requested behavior.
+  reviewer: Review documentation for accuracy, clarity, and omissions.
+
+models:
+  writer: openai:gpt-5.5
+  reviewer: openai:gpt-5.5
+
+steps:
+  - id: draft-docs
+    role: writer
+    context:
+      - git_diff
+      - file:README.md
+      - glob:docs/**/*.md
+
+  - id: review-docs
+    role: reviewer
+    context:
+      - git_diff
+      - file:README.md
+      - glob:docs/**/*.md

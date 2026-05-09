@@ -1,127 +1,188 @@
 # Relay
 
-Relay is a lightweight CLI for configurable AI coding workflows.
+A tiny CLI for running explicit AI coding workflows from YAML.
 
-It is meant to feel like Unix pipes for coding agents: small commands,
-explicit configuration, sequential execution, and no runtime state to manage.
+## Core Idea
+
+Coding with LLMs is not one-shot generation.
+
+Real development is:
+
+```text
+plan -> implement -> review -> iterate
+```
+
+Relay makes those workflows programmable. A run is just:
+
+```text
+task + workflow + explicit context + model routing
+```
+
+Relay is stateless. The only project file it creates is `.relay.yaml`.
 
 ## Install
 
 ```bash
-pip install -e .
+pip install relay-ai
 ```
 
-## Initialize A Workflow
+For local development:
 
-List built-in presets:
+```bash
+pip install -e ".[dev]"
+```
+
+## Quickstart
+
+```bash
+relay init review-existing-diff
+relay run "review my current changes before I commit"
+```
+
+Relay copies a YAML preset into `.relay.yaml`. Edit it like any other project
+file.
+
+## How Relay Works
+
+- **Task**: the instruction passed on the command line.
+- **Workflow**: the YAML file that defines ordered steps.
+- **Steps**: sequential units of work. Relay runs them in order.
+- **Roles**: named responsibilities such as `planner`, `reviewer`, or `writer`.
+- **Context**: explicit repo input declared per step.
+- **Model routing**: each role can point at a different LiteLLM model.
+
+Each step receives the task, prior step outputs, and its declared context. The
+step result stays in memory and is printed to the terminal.
+
+## Example Workflow Config
+
+```yaml
+workflow: review-existing-diff
+
+roles:
+  reviewer: Review the provided task context as if it were an existing diff.
+
+models:
+  reviewer: openai:gpt-5.5
+
+steps:
+  - id: review
+    role: reviewer
+    context:
+      - git_diff
+```
+
+## Built-In Workflows
+
+- `plan-implement-review`: plan a task, propose an implementation, review it.
+- `review-existing-diff`: review the current working tree diff.
+- `debug-failing-test`: diagnose a failing test, propose a fix, review it.
+- `add-tests`: plan, draft, and review focused test coverage.
+- `docs-sync`: update docs from the current diff and README context.
+- `custom`: a minimal one-step workflow to edit freely.
+
+List presets:
 
 ```bash
 relay init --list
 ```
 
-Initialize interactively:
+Initialize another preset:
 
 ```bash
-relay init
+relay init docs-sync --force
 ```
 
-Initialize a specific preset:
+## Examples
 
-```bash
-relay init plan-implement-review
-```
+The `examples/` directory contains small workflow files you can copy from:
 
-This writes the only project file Relay needs:
+- `examples/review-existing-diff.yaml`
+- `examples/add-tests.yaml`
+- `examples/docs-sync.yaml`
 
-```text
-.relay.yaml
-```
+## Explicit Context
 
-Presets are plain YAML templates. Users can inspect, edit, and commit them.
+Relay uses explicit context instead of automatic retrieval. That keeps runs easy
+to understand: the YAML shows exactly what each step can see.
 
-## Run
+Supported context sources:
 
-```bash
-relay run "add a JSON export command"
-```
+- `git_diff`: runs `git diff --no-ext-diff`.
+- `file:<path>`: reads one UTF-8 file relative to the project root.
+- `glob:<pattern>`: reads matching UTF-8 files relative to the project root,
+  with a small content cap.
 
-Relay runs the configured steps in memory and prints each result to the
-terminal. It does not create run directories, state files, caches, history, or
-artifact stores.
-
-By default, Relay returns deterministic mock model responses so workflows run
-without credentials. To use the models from `.relay.yaml`, set:
-
-```bash
-RELAY_LIVE=1 relay run "add a JSON export command"
-```
-
-To override every role with one LiteLLM model:
-
-```bash
-RELAY_MODEL=openai:gpt-5.5 relay run "add a JSON export command"
-```
-
-## Workflow Format
+Example:
 
 ```yaml
-workflow: plan-implement-review
-
-roles:
-  planner: Create a concise implementation plan with ordered steps and risks.
-  implementer: Produce the proposed code change or patch content from the plan.
-  reviewer: Review the prior output for bugs, gaps, and missing tests.
-
-models:
-  planner: openai:gpt-5.5
-  implementer: anthropic:claude-sonnet
-  reviewer: openai:gpt-5.5
-
 steps:
-  - id: plan
-    role: planner
-
-  - id: implement
-    role: implementer
-
-  - id: review
+  - id: review-docs
     role: reviewer
-
-review_loop:
-  enabled: true
-  max_iterations: 3
+    context:
+      - git_diff
+      - file:README.md
+      - glob:docs/**/*.md
 ```
 
-When `review_loop.enabled` is true, Relay repeats only the final configured
-step. `max_iterations: 3` means the final step runs once during the normal
-workflow, then two more times with prior step results in memory as context. It
-does not rerun the full workflow.
+Missing files, empty diffs, non-git directories, and unreadable files appear as
+clear placeholder notes in the prompt.
+
+## Prompt Previewing
+
+Use `--show-prompt` to see exactly what Relay would send to each model:
+
+```bash
+relay run "review my current changes before I commit" --show-prompt
+```
+
+Relay does not call models in prompt preview mode. For later steps, it uses a
+clear placeholder where real previous step output would appear.
+
+## Mock Mode
+
+Relay works without API keys by returning deterministic mock responses.
+
+Use the models configured in `.relay.yaml`:
+
+```bash
+RELAY_LIVE=1 relay run "review my current changes"
+```
+
+Override every configured model with one LiteLLM model:
+
+```bash
+RELAY_MODEL=openai:gpt-5.5 relay run "review my current changes"
+```
+
+## Philosophy
+
+Relay should feel like:
+
+- `git`
+- `pytest`
+- `rg`
+- `cargo`
+
+It should not feel like:
+
+- an agent framework
+- an autonomous coding platform
+- an AI operating system
+
+Relay intentionally avoids persistence, replay systems, caches, plugins, DAGs,
+async runtimes, vector search, automatic retrieval, memory systems, and agent
+abstractions.
 
 ## Architecture
 
 ```text
 relay/
-  cli.py        Typer CLI entrypoint
-  config.py     Pydantic workflow schema and YAML loader
-  workflow.py   built-in YAML template discovery and initialization
-  executor.py   tiny in-memory sequential runner
-  llm.py        tiny LiteLLM wrapper with mock fallback
-  prompts.py    prompt builder
-
-relay/workflows/
-  plan_implement_review.yaml
-  review_existing_diff.yaml
-  test_failure_debug.yaml
-  docs_update.yaml
-  custom.yaml
+  cli.py
+  config.py
+  context.py
+  executor.py
+  llm.py
+  prompts.py
+  workflow.py
 ```
-
-## Philosophy
-
-Relay is workflow orchestration, model routing, and review loops. It is not run
-management, artifact persistence, observability infrastructure, or a stateful
-agent environment.
-
-The project intentionally avoids plugins, DAG engines, async runtimes, agent
-swarms, vector databases, long-term memory, GUIs, web servers, replay systems,
-and artifact explorers.

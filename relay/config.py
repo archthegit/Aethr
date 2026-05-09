@@ -22,19 +22,7 @@ class WorkflowStep(BaseModel):
 
     id: str = Field(min_length=1)
     role: str = Field(min_length=1)
-
-
-class ReviewLoopConfig(BaseModel):
-    """Optional review loop settings.
-
-    The executor keeps looping deliberately narrow: when enabled, it repeats the
-    final review step after the first pass. There is no branching or graph model.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    max_iterations: int = Field(default=1, ge=1)
+    context: list[str] = Field(default_factory=list)
 
 
 class WorkflowConfig(BaseModel):
@@ -46,7 +34,6 @@ class WorkflowConfig(BaseModel):
     roles: dict[str, str] = Field(default_factory=dict)
     models: dict[str, str] = Field(default_factory=dict)
     steps: list[WorkflowStep] = Field(min_length=1)
-    review_loop: ReviewLoopConfig = Field(default_factory=ReviewLoopConfig)
 
     @model_validator(mode="after")
     def validate_roles(self) -> "WorkflowConfig":

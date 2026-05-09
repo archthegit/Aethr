@@ -6,8 +6,9 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
+from relay import __version__
 from relay.config import CONFIG_FILE, ConfigError, load_workflow_config
-from relay.executor import StepResult, run_workflow
+from relay.executor import StepPrompt, StepResult, build_workflow_prompts, run_workflow
 from relay.llm import LLMError
 from relay.workflow import WorkflowTemplateError, available_workflows, init_workflow
 
@@ -54,6 +55,10 @@ def init(
 @app.command()
 def run(
     task: Annotated[str, typer.Argument(help="Coding task to run through the pipeline.")],
+    show_prompt: Annotated[
+        bool,
+        typer.Option("--show-prompt", help="Print exact step prompts without calling models."),
+    ] = False,
 ) -> None:
     """Run the configured sequential workflow."""
 
@@ -63,7 +68,14 @@ def run(
     except ConfigError as exc:
         raise typer.BadParameter(f"{exc}. Run 'relay init' to create {CONFIG_FILE}.") from exc
 
-    console.print(f"Workflow: [cyan]{config.workflow}[/cyan]")
+    console.print(f"[bold]Workflow[/bold] {config.workflow}")
+    if show_prompt:
+        console.print("[bold]Mode[/bold] prompt preview")
+        for planned in build_workflow_prompts(task, config):
+            _print_step_prompt(planned)
+        console.print("[green]Prompt preview complete[/green]")
+        return
+
     try:
         results = run_workflow(task, config, on_step_result=_print_step_result)
     except LLMError as exc:
@@ -71,13 +83,36 @@ def run(
     console.print(f"[green]Workflow complete[/green] ({len(results)} step results)")
 
 
+@app.command()
+def version() -> None:
+    """Print the Relay version."""
+
+    console.print(f"Relay {__version__}")
+
+
 def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
-    iteration = result.metadata.get("iteration", "1")
-    suffix = f" iteration {iteration}" if iteration != "1" else ""
-    title = f"{result.step_id} ({result.metadata['role']}){suffix}"
+    title = step_title(result.step_id, result.metadata)
+    console.print()
     console.print(Panel(result.content, title=title, border_style="green"))
+
+
+def _print_step_prompt(planned: StepPrompt) -> None:
+    """Print one planned prompt."""
+
+    title = step_title(planned.step_id, planned.metadata)
+    console.print()
+    console.print(Panel(planned.prompt, title=title, border_style="yellow"))
+
+
+def step_title(step_id: str, metadata: dict[str, str]) -> str:
+    """Build a compact terminal title for a step."""
+
+    return (
+        f"{step_id} | role={metadata['role']} | "
+        f"model={metadata['model']} | context={metadata['context_sources']}"
+    )
 
 
 def _resolve_workflow_choice(choice: str, workflows: list[str]) -> str:

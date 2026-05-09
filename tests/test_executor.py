@@ -1,5 +1,5 @@
-from relay.config import ReviewLoopConfig, WorkflowConfig, WorkflowStep
-from relay.executor import run_workflow
+from relay.config import WorkflowConfig, WorkflowStep
+from relay.executor import build_workflow_prompts, run_workflow
 
 
 def test_run_workflow_returns_mock_step_results() -> None:
@@ -20,19 +20,37 @@ def test_run_workflow_returns_mock_step_results() -> None:
     assert results[0].metadata["role"] == "first"
 
 
-def test_review_loop_repeats_only_final_step() -> None:
+def test_run_workflow_runs_each_configured_step_once() -> None:
     config = WorkflowConfig(
-        workflow="loop",
+        workflow="explicit",
         roles={"planner": "Plan.", "reviewer": "Review."},
         models={"planner": "openai:gpt-5.5", "reviewer": "openai:gpt-5.5"},
         steps=[
             WorkflowStep(id="plan", role="planner"),
             WorkflowStep(id="review", role="reviewer"),
         ],
-        review_loop=ReviewLoopConfig(enabled=True, max_iterations=3),
     )
 
     results = run_workflow("do the thing", config)
 
-    assert [result.step_id for result in results] == ["plan", "review", "review", "review"]
-    assert [result.metadata["iteration"] for result in results] == ["1", "1", "2", "3"]
+    assert [result.step_id for result in results] == ["plan", "review"]
+
+
+def test_build_workflow_prompts_does_not_call_models() -> None:
+    config = WorkflowConfig(
+        workflow="preview",
+        roles={"planner": "Plan.", "reviewer": "Review."},
+        models={"planner": "openai:gpt-5.5", "reviewer": "openai:gpt-5.5"},
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="review", role="reviewer", context=["file:MISSING.md"]),
+        ],
+    )
+
+    prompts = build_workflow_prompts("do the thing", config)
+
+    assert [prompt.step_id for prompt in prompts] == ["plan", "review"]
+    assert prompts[0].metadata["model"] == "openai:gpt-5.5"
+    assert prompts[1].metadata["context_sources"] == "1"
+    assert "[output from plan]" in prompts[1].prompt
+    assert "[missing file:" in prompts[1].prompt

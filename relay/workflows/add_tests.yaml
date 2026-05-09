@@ -1,0 +1,30 @@
+workflow: add-tests
+
+roles:
+  test-planner: Identify the behavior that needs coverage and the smallest useful test cases.
+  test-writer: Draft focused tests that match the existing project style.
+  reviewer: Review the proposed tests for correctness, brittleness, and missing assertions.
+
+models:
+  test-planner: openai:gpt-5.5
+  test-writer: anthropic:claude-sonnet
+  reviewer: openai:gpt-5.5
+
+steps:
+  - id: plan-tests
+    role: test-planner
+    context:
+      - glob:src/**/*.py
+      - glob:tests/**/*.py
+
+  - id: write-tests
+    role: test-writer
+    context:
+      - glob:src/**/*.py
+      - glob:tests/**/*.py
+
+  - id: review-tests
+    role: reviewer
+    context:
+      - glob:src/**/*.py
+      - glob:tests/**/*.py

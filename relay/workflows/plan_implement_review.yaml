@@ -19,7 +19,3 @@ steps:
 
   - id: review
     role: reviewer
-
-review_loop:
-  enabled: true
-  max_iterations: 3

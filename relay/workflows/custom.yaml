@@ -9,7 +9,3 @@ models:
 steps:
   - id: work
     role: worker
-
-review_loop:
-  enabled: false
-  max_iterations: 1

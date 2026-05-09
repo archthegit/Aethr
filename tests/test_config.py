@@ -67,3 +67,27 @@ steps:
 
     with pytest.raises(ConfigError, match="models reference undefined roles: reviewer"):
         load_workflow_config(config_path)
+
+
+def test_load_workflow_config_accepts_step_context(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path / ".relay.yaml",
+        """
+workflow: context-test
+roles:
+  reviewer: Review the work.
+models:
+  reviewer: openai:gpt-5.5
+steps:
+  - id: review
+    role: reviewer
+    context:
+      - git_diff
+      - file:README.md
+      - glob:src/**/*.py
+""",
+    )
+
+    config = load_workflow_config(config_path)
+
+    assert config.steps[0].context == ["git_diff", "file:README.md", "glob:src/**/*.py"]

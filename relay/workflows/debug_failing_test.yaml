@@ -1,4 +1,4 @@
-workflow: test-failure-debug
+workflow: debug-failing-test
 
 roles:
   debugger: Diagnose failing tests and propose the smallest useful fix.
@@ -11,13 +11,21 @@ models:
 steps:
   - id: diagnose
     role: debugger
+    context:
+      - git_diff
+      - glob:src/**/*.py
+      - glob:tests/**/*.py
 
   - id: propose-fix
     role: debugger
+    context:
+      - git_diff
+      - glob:src/**/*.py
+      - glob:tests/**/*.py
 
   - id: review
     role: reviewer
-
-review_loop:
-  enabled: true
-  max_iterations: 2
+    context:
+      - git_diff
+      - glob:src/**/*.py
+      - glob:tests/**/*.py
