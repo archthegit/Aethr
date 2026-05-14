@@ -22,8 +22,17 @@ class RepeatConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     back_to: str = Field(min_length=1)
-    until_contains: str = Field(min_length=1)
     max_iterations: int = Field(gt=0)
+    until_contains: str | None = None
+    until_review_pass: bool = False
+
+    @model_validator(mode="after")
+    def validate_condition(self) -> "RepeatConfig":
+        """Require a concrete loop condition."""
+
+        if not self.until_contains and not self.until_review_pass:
+            raise ValueError("repeat requires until_contains or until_review_pass")
+        return self
 
 
 class WorkflowStep(BaseModel):
@@ -36,6 +45,7 @@ class WorkflowStep(BaseModel):
     backend: Literal["model", "opencode"] = "model"
     unsafe_permissions: bool = False
     context: list[str] = Field(default_factory=list)
+    history_visibility: Literal["all", "latest", "summary", "none"] = "all"
     repeat: RepeatConfig | None = None
 
 

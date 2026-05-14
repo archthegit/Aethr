@@ -183,13 +183,27 @@ steps:
     role: reviewer
     repeat:
       back_to: implement
-      until_contains: "Loop status: done"
+      until_review_pass: true
       max_iterations: 3
 ```
 
 Use this for bounded review/fix cycles. The controller step should emit
-`Loop status: done` when the loop should stop and `Loop status: continue` when
-another pass is needed.
+`Review status: pass` when there are no high or medium findings, and
+`Review status: revise` when another pass is needed.
+
+For loop-heavy workflows, you can also narrow step history visibility:
+
+```yaml
+steps:
+  - id: implement
+    role: implementer
+    backend: opencode
+    history_visibility: latest
+```
+
+Use `latest` when the next step only needs the most recent result, `summary`
+when you want a compressed history, and `none` when the step should only see
+its explicit context.
 
 ## Prompt Previewing
 

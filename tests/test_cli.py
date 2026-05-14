@@ -12,7 +12,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.6" in result.output
+    assert "Aethr 0.1.7" in result.output
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:

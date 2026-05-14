@@ -149,7 +149,7 @@ def test_run_workflow_repeats_until_condition_met(monkeypatch: pytest.MonkeyPatc
                 role="reviewer",
                 repeat={
                     "back_to": "implement",
-                    "until_contains": "Loop status: done",
+                    "until_review_pass": True,
                     "max_iterations": 3,
                 },
             ),
@@ -159,8 +159,8 @@ def test_run_workflow_repeats_until_condition_met(monkeypatch: pytest.MonkeyPatc
     implement_calls: list[str] = []
     review_outputs = iter(
         [
-            "review findings\nLoop status: continue",
-            "review findings resolved\nLoop status: done",
+            "review findings\nReview status: revise",
+            "review findings resolved\nReview status: pass",
         ]
     )
 
@@ -206,7 +206,7 @@ def test_run_workflow_repeats_until_condition_met(monkeypatch: pytest.MonkeyPatc
         "review",
     ]
     assert len(implement_calls) == 2
-    assert results[-1].content.endswith("Loop status: done")
+    assert results[-1].content.endswith("Review status: pass")
 
     checkpoint = serialize_checkpoint(results)
     restored = load_checkpoint(checkpoint)
@@ -268,6 +268,33 @@ def test_build_workflow_prompts_does_not_call_models() -> None:
     assert prompts[1].metadata["context_sources"] == "1"
     assert "[simulated previous output from plan]" in prompts[1].prompt
     assert "[missing file:" in prompts[1].prompt
+
+
+def test_build_workflow_prompts_can_limit_history_visibility() -> None:
+    config = WorkflowConfig(
+        workflow="preview",
+        roles={"planner": "Plan.", "implementer": "Implement.", "reviewer": "Review."},
+        models={
+            "planner": "openai:gpt-5.5",
+            "implementer": "openai:gpt-5.5",
+            "reviewer": "openai:gpt-5.5",
+        },
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="implement", role="implementer"),
+            WorkflowStep(id="review", role="reviewer", history_visibility="latest"),
+        ],
+    )
+    history = [
+        StepResult(step_id="plan", content="seed plan"),
+        StepResult(step_id="implement", content="latest implement"),
+    ]
+
+    prompts = build_workflow_prompts("do the thing", config, previous_results=history)
+
+    assert len(prompts) == 1
+    assert "--- plan ---" not in prompts[0].prompt
+    assert "--- implement ---" in prompts[0].prompt
 
 
 def test_run_workflow_emits_checkpoint_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:

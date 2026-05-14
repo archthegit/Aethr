@@ -156,7 +156,7 @@ def build_step_prompt(
 
     model = ModelClient(config.models.get(step.role))
     backend = step.backend
-    previous_context = format_previous_results(previous_results)
+    previous_context = format_previous_results(previous_results, step.history_visibility)
     explicit_context = collect_context(step.context, latest_diff=latest_diff_from_results(previous_results))
     loop_instruction = repeat_instruction(step)
     prompt = step_prompt(
@@ -172,6 +172,7 @@ def build_step_prompt(
         "model": model.requested_model or "mock",
         "backend": backend,
         "context_sources": str(len(step.context)),
+        "history_visibility": step.history_visibility,
     }
     if step.backend == "opencode":
         metadata["permissions"] = "unsafe" if step.unsafe_permissions else "safe"
@@ -183,6 +184,14 @@ def repeat_instruction(step: WorkflowStep) -> str:
 
     if step.repeat is None:
         return ""
+    if step.repeat.until_review_pass:
+        return (
+            f"Repeat the workflow slice starting at `{step.repeat.back_to}` until this review has "
+            "no findings of severity high or medium. "
+            f"Stop after {step.repeat.max_iterations} total pass(es) through the repeated slice. "
+            "If the loop is complete, end with the exact line `Review status: pass`. "
+            "Otherwise end with the exact line `Review status: revise`."
+        )
     return (
         f"Repeat the workflow slice starting at `{step.repeat.back_to}` until this step contains "
         f"`{step.repeat.until_contains}`. "
@@ -192,15 +201,55 @@ def repeat_instruction(step: WorkflowStep) -> str:
     )
 
 
-def format_previous_results(results: list[StepResult]) -> str:
+def format_previous_results(results: list[StepResult], visibility: str = "all") -> str:
     """Format prior in-memory step outputs for the next prompt."""
 
     if not results:
         return "No previous step output."
+
+    if visibility == "none":
+        return "No previous step output."
+    if visibility == "latest":
+        return format_step_result_for_prompt(results[-1].step_id, results[-1].content, results[-1].artifacts)
+    if visibility == "summary":
+        return summarize_previous_results(results)
     return "\n\n".join(
         format_step_result_for_prompt(result.step_id, result.content, result.artifacts)
         for result in results
     )
+
+
+def summarize_previous_results(results: list[StepResult]) -> str:
+    """Compress prior results into a compact history summary."""
+
+    lines = ["--- history summary ---"]
+    for index, result in enumerate(results, start=1):
+        content = first_nonempty_line(result.content)
+        if result.artifacts is not None and result.artifacts.changed_files:
+            artifact_note = f" files={len(result.artifacts.changed_files)}"
+        elif result.artifacts is not None and result.artifacts.git_diff.strip():
+            artifact_note = " artifacts=diff"
+        else:
+            artifact_note = ""
+        lines.append(f"{index}. {result.step_id}: {truncate_summary(content)}{artifact_note}")
+    return "\n".join(lines)
+
+
+def first_nonempty_line(content: str) -> str:
+    """Return the first non-empty line of content."""
+
+    for line in content.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def truncate_summary(text: str, limit: int = 140) -> str:
+    """Trim summary text to a readable width."""
+
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
 
 
 def latest_diff_from_results(results: list[StepResult]) -> str | None:
@@ -313,8 +362,10 @@ def run_repeat_block(
 def repeat_condition_met(result: StepResult, repeat: object) -> bool:
     """Check whether a controller step has satisfied its repeat condition."""
 
+    if getattr(repeat, "until_review_pass", False):
+        return review_status_from_result(result) == "pass"
     until_contains = getattr(repeat, "until_contains", "")
-    return until_contains in result.content
+    return until_contains in result.content if until_contains else False
 
 
 def annotate_loop_result(
@@ -329,8 +380,13 @@ def annotate_loop_result(
     metadata["loop_status"] = loop_status
     metadata["loop_iterations"] = str(iterations)
     metadata["loop_back_to"] = getattr(repeat, "back_to", "")
-    metadata["loop_until"] = getattr(repeat, "until_contains", "")
+    metadata["loop_until"] = getattr(repeat, "until_contains", "") or (
+        "review_pass" if getattr(repeat, "until_review_pass", False) else ""
+    )
     metadata["loop_max_iterations"] = str(getattr(repeat, "max_iterations", 0))
+    review_status = review_status_from_result(result)
+    if review_status is not None:
+        metadata["review_status"] = review_status
     return StepResult(
         step_id=result.step_id,
         content=result.content,
@@ -338,6 +394,26 @@ def annotate_loop_result(
         artifacts=result.artifacts,
         usage=result.usage,
     )
+
+
+def review_status_from_result(result: StepResult) -> str | None:
+    """Extract the reviewer status marker from content or metadata."""
+
+    if result.metadata.get("review_status") in {"pass", "revise"}:
+        return result.metadata["review_status"]
+    return review_status_from_content(result.content)
+
+
+def review_status_from_content(content: str) -> str | None:
+    """Parse the reviewer status line from step content."""
+
+    for line in reversed(content.splitlines()):
+        stripped = line.strip().lower()
+        if stripped == "review status: pass":
+            return "pass"
+        if stripped == "review status: revise":
+            return "revise"
+    return None
 
 
 def step_index_of(config: WorkflowConfig, step_id: str) -> int:

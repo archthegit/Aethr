@@ -267,6 +267,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
     table.add_column("Perms", width=8)
     table.add_column("Model")
     table.add_column("Ctx", justify="right", width=4)
+    table.add_column("Hist", width=8)
     table.add_column("Loop", width=18)
     table.add_column("State", width=10)
 
@@ -282,6 +283,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
         permissions = ""
         if step.backend == "opencode":
             permissions = "unsafe" if step.unsafe_permissions else "safe"
+        history = step.history_visibility
         loop = ""
         if step.repeat is not None:
             loop = f"{step.repeat.back_to}→{step.id} x{step.repeat.max_iterations}"
@@ -294,6 +296,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
             permissions,
             model,
             str(len(step.context)),
+            history,
             loop,
             state,
         )

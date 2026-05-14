@@ -136,6 +136,27 @@ steps:
     assert config.steps[0].backend == "opencode"
 
 
+def test_load_workflow_config_accepts_history_visibility(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path / ".aethr.yaml",
+        """
+workflow: visibility-test
+roles:
+  reviewer: Review the work.
+models:
+  reviewer: openai:gpt-4o-mini
+steps:
+  - id: review
+    role: reviewer
+    history_visibility: latest
+""",
+    )
+
+    config = load_workflow_config(config_path)
+
+    assert config.steps[0].history_visibility == "latest"
+
+
 def test_load_workflow_config_accepts_repeat_block(tmp_path: Path) -> None:
     config_path = write_config(
         tmp_path / ".aethr.yaml",
@@ -155,7 +176,7 @@ steps:
     role: reviewer
     repeat:
       back_to: implement
-      until_contains: "Loop status: done"
+      until_review_pass: true
       max_iterations: 3
 """,
     )
@@ -165,7 +186,7 @@ steps:
     repeat = config.steps[1].repeat
     assert repeat is not None
     assert repeat.back_to == "implement"
-    assert repeat.until_contains == "Loop status: done"
+    assert repeat.until_review_pass is True
     assert repeat.max_iterations == 3
 
 
@@ -185,7 +206,7 @@ steps:
     role: reviewer
     repeat:
       back_to: implement
-      until_contains: "Loop status: done"
+      until_review_pass: true
       max_iterations: 3
   - id: implement
     role: implementer

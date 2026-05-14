@@ -14,7 +14,9 @@ ROLE_INSTRUCTIONS = {
     ),
     "reviewer": (
         "Review critically. Lead with findings, bugs, regressions, missing tests, and unclear assumptions. "
-        "Keep summaries secondary and concise."
+        "Use explicit severities (`high`, `medium`, `low`) for each finding. "
+        "If there are no high or medium findings, end with the exact line `Review status: pass`. "
+        "Otherwise end with the exact line `Review status: revise`."
     ),
     "debugger": (
         "Diagnose the failure from the available context. Separate likely cause, evidence, and smallest fix. "
