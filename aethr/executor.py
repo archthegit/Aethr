@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from aethr.artifacts import StepArtifacts, format_artifact_block, format_step_result_for_prompt
 from aethr.config import WorkflowConfig, WorkflowStep
 from aethr.agents import OpenCodeAgentClient
 from aethr.context import collect_context
@@ -20,6 +21,7 @@ class StepResult:
     step_id: str
     content: str
     metadata: dict[str, str] = field(default_factory=dict)
+    artifacts: StepArtifacts | None = None
     usage: UsageSummary | None = None
 
 
@@ -119,12 +121,15 @@ def run_step(
         planned = build_step_prompt(task, step, config, previous_results)
     chunk_callback = (lambda chunk: on_chunk(step.id, chunk)) if on_chunk is not None else None
     if step.backend == "opencode":
-        agent = OpenCodeAgentClient(config.models.get(step.role))
+        agent = OpenCodeAgentClient(
+            config.models.get(step.role),
+            unsafe_permissions=step.unsafe_permissions,
+        )
         completion = agent.complete(planned.prompt, on_chunk=chunk_callback)
     else:
         model = ModelClient(config.models.get(step.role))
         completion = model.complete(planned.prompt, on_chunk=chunk_callback)
-    return StepResult(step_id=step.id, content=completion.content, metadata=planned.metadata, usage=completion.usage)
+    return result_from_completion(step.id, planned.metadata, completion)
 
 
 def build_step_prompt(
@@ -138,7 +143,7 @@ def build_step_prompt(
     model = ModelClient(config.models.get(step.role))
     backend = step.backend
     previous_context = format_previous_results(previous_results)
-    explicit_context = collect_context(step.context)
+    explicit_context = collect_context(step.context, latest_diff=latest_diff_from_results(previous_results))
     prompt = step_prompt(
         task=task,
         step=step,
@@ -152,6 +157,8 @@ def build_step_prompt(
         "backend": backend,
         "context_sources": str(len(step.context)),
     }
+    if step.backend == "opencode":
+        metadata["permissions"] = "unsafe" if step.unsafe_permissions else "safe"
     return StepPrompt(step_id=step.id, prompt=prompt, metadata=metadata)
 
 
@@ -160,7 +167,19 @@ def format_previous_results(results: list[StepResult]) -> str:
 
     if not results:
         return "No previous step output."
-    return "\n\n".join(f"--- {result.step_id} ---\n{result.content.rstrip()}" for result in results)
+    return "\n\n".join(
+        format_step_result_for_prompt(result.step_id, result.content, result.artifacts)
+        for result in results
+    )
+
+
+def latest_diff_from_results(results: list[StepResult]) -> str | None:
+    """Return the latest implementation diff as explicit context."""
+
+    for result in reversed(results):
+        if result.artifacts is not None and result.artifacts.git_diff.strip():
+            return format_artifact_block(result.artifacts)
+    return None
 
 
 def validate_checkpoint(results: list[StepResult], config: WorkflowConfig) -> None:
@@ -202,6 +221,17 @@ def load_checkpoint(raw: str) -> list[StepResult]:
         metadata = item.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
+        artifacts_data = item.get("artifacts")
+        artifacts = None
+        if isinstance(artifacts_data, dict):
+            changed_files = artifacts_data.get("changed_files") or []
+            if not isinstance(changed_files, list):
+                changed_files = []
+            artifacts = StepArtifacts(
+                changed_files=[str(value) for value in changed_files],
+                diff_stat=str(artifacts_data.get("diff_stat", "") or ""),
+                git_diff=str(artifacts_data.get("git_diff", "") or ""),
+            )
         usage_data = item.get("usage")
         usage = None
         if isinstance(usage_data, dict):
@@ -216,6 +246,7 @@ def load_checkpoint(raw: str) -> list[StepResult]:
                 step_id=step_id,
                 content=content,
                 metadata={str(key): str(value) for key, value in metadata.items()},
+                artifacts=artifacts,
                 usage=usage,
             )
         )
@@ -253,6 +284,12 @@ def checkpoint_entry(result: StepResult) -> dict[str, object]:
         "content": result.content,
         "metadata": result.metadata,
     }
+    if result.artifacts is not None:
+        entry["artifacts"] = {
+            "changed_files": result.artifacts.changed_files,
+            "diff_stat": result.artifacts.diff_stat,
+            "git_diff": result.artifacts.git_diff,
+        }
     if result.usage is not None:
         entry["usage"] = {
             "prompt_tokens": result.usage.prompt_tokens,
@@ -261,3 +298,18 @@ def checkpoint_entry(result: StepResult) -> dict[str, object]:
             "cost": result.usage.cost,
         }
     return entry
+
+
+def result_from_completion(step_id: str, metadata: dict[str, str], completion: object) -> StepResult:
+    """Convert backend completion objects into workflow results."""
+
+    content = getattr(completion, "content", "")
+    usage = getattr(completion, "usage", None)
+    artifacts = getattr(completion, "artifacts", None)
+    return StepResult(
+        step_id=step_id,
+        content=content,
+        metadata=metadata,
+        artifacts=artifacts,
+        usage=usage,
+    )

@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from aethr import __version__
+from aethr.artifacts import format_artifact_block
 from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
 from aethr.executor import (
     StepPrompt,
@@ -150,13 +151,14 @@ def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:
 
     backend = planned.metadata.get("backend", "model")
     backend_text = f" backend={backend}" if backend != "model" else ""
+    permissions_text = _permissions_suffix(planned.metadata)
     details = Table.grid(expand=True, padding=(0, 1))
     details.add_column(ratio=1)
     details.add_column(ratio=2)
     details.add_row(
         f"[bold cyan]{index}/{total}[/bold cyan] [bold]{planned.step_id}[/bold]",
         f"[dim]role={planned.metadata['role']} model={planned.metadata['model']}{backend_text} "
-        f"context={planned.metadata['context_sources']}[/dim]",
+        f"context={planned.metadata['context_sources']}{permissions_text}[/dim]",
     )
     console.print()
     console.print(Panel(details, border_style="cyan", box=box.SIMPLE))
@@ -172,7 +174,13 @@ def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
     console.print()
-    console.print(Panel(result.content, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
+    parts = []
+    if result.content.strip():
+        parts.append(result.content.rstrip())
+    if result.artifacts is not None:
+        parts.append(format_artifact_block(result.artifacts))
+    body = "\n\n".join(parts) if parts else "[no content]"
+    console.print(Panel(body, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
 
 
 def _print_step_status(result: StepResult) -> None:
@@ -184,10 +192,12 @@ def _print_step_status(result: StepResult) -> None:
 
     backend = result.metadata.get("backend", "model")
     backend_text = f" backend={backend}" if backend != "model" else ""
+    permissions_text = _permissions_suffix(result.metadata)
     console.print()
     console.print(
         f"[green]✓[/green] [bold]{result.step_id}[/bold] "
-        f"[dim]role={result.metadata['role']} model={result.metadata['model']}{backend_text}[/dim]{usage}"
+        f"[dim]role={result.metadata['role']} model={result.metadata['model']}{backend_text}"
+        f"{permissions_text}[/dim]{usage}"
     )
 
 
@@ -207,6 +217,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
     table.add_column("Step", style="bold")
     table.add_column("Role")
     table.add_column("Backend")
+    table.add_column("Perms", width=8)
     table.add_column("Model")
     table.add_column("Ctx", justify="right", width=4)
     table.add_column("State", width=10)
@@ -220,18 +231,31 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
             state = "[dim]pending[/dim]"
 
         backend = step.backend if step.backend != "model" else "model"
+        permissions = ""
+        if step.backend == "opencode":
+            permissions = "unsafe" if step.unsafe_permissions else "safe"
         model = config.models.get(step.role, "mock")
         table.add_row(
             str(index + 1),
             step.id,
             step.role,
             backend,
+            permissions,
             model,
             str(len(step.context)),
             state,
         )
 
     console.print(Panel(table, title="Workflow map", border_style="blue", box=box.ROUNDED))
+
+
+def _permissions_suffix(metadata: dict[str, str]) -> str:
+    """Render permission mode for agent-backed steps."""
+
+    permissions = metadata.get("permissions")
+    if not permissions:
+        return ""
+    return f" permissions={permissions}"
 
 
 def _load_resume_results(resume_checkpoint: str | None, config) -> list[StepResult]:

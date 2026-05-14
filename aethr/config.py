@@ -24,6 +24,7 @@ class WorkflowStep(BaseModel):
     id: str = Field(min_length=1)
     role: str = Field(min_length=1)
     backend: Literal["model", "opencode"] = "model"
+    unsafe_permissions: bool = False
     context: list[str] = Field(default_factory=list)
 
 

@@ -93,6 +93,28 @@ steps:
     assert config.steps[0].context == ["git_diff", "file:README.md", "glob:src/**/*.py"]
 
 
+def test_load_workflow_config_accepts_unsafe_permissions_flag(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path / ".aethr.yaml",
+        """
+workflow: backend-test
+roles:
+  implementer: Implement the work.
+models:
+  implementer: openai:gpt-5.3-codex
+steps:
+  - id: implement
+    role: implementer
+    backend: opencode
+    unsafe_permissions: true
+""",
+    )
+
+    config = load_workflow_config(config_path)
+
+    assert config.steps[0].unsafe_permissions is True
+
+
 def test_load_workflow_config_accepts_agent_backend(tmp_path: Path) -> None:
     config_path = write_config(
         tmp_path / ".aethr.yaml",

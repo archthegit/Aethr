@@ -62,3 +62,15 @@ def test_context_presets_declare_explicit_context(tmp_path: Path) -> None:
     assert "- glob:src/**/*.py" in debug_text
     assert "- glob:tests/**/*.py" in debug_text
     assert "anthropic:" not in debug_text
+
+
+def test_plan_implement_review_review_step_sees_git_diff(tmp_path: Path) -> None:
+    config_path = tmp_path / ".aethr.yaml"
+
+    init_workflow("plan-implement-review", destination=config_path)
+
+    config_text = config_path.read_text(encoding="utf-8")
+
+    assert "backend: opencode" in config_text
+    assert "role: reviewer" in config_text
+    assert "- latest_diff" in config_text

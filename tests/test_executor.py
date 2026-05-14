@@ -1,6 +1,7 @@
 import pytest
 
 from aethr.config import WorkflowConfig, WorkflowStep
+from aethr.artifacts import StepArtifacts
 from aethr.executor import (
     StepResult,
     WorkflowStepError,
@@ -61,6 +62,11 @@ def test_run_workflow_supports_resume_checkpoints(monkeypatch: pytest.MonkeyPatc
         StepResult(
             step_id="plan",
             content="seed plan",
+            artifacts=StepArtifacts(
+                changed_files=["src/app.py"],
+                diff_stat=" src/app.py | 1 +",
+                git_diff="diff --git a/src/app.py b/src/app.py\n+print('hi')\n",
+            ),
             usage=UsageSummary(prompt_tokens=10, completion_tokens=5, total_tokens=15, cost=0.01),
         )
     ]
@@ -122,6 +128,42 @@ def test_run_workflow_routes_opencode_backend(monkeypatch: pytest.MonkeyPatch) -
     assert results[0].metadata["backend"] == "opencode"
 
 
+def test_run_workflow_preserves_agent_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = WorkflowConfig(
+        workflow="agentic",
+        roles={"implementer": "Implement."},
+        models={"implementer": "openai:gpt-5.3-codex"},
+        steps=[WorkflowStep(id="implement", role="implementer", backend="opencode")],
+    )
+
+    def fake_complete(self, prompt, on_chunk=None):
+        return type(
+            "AgentCompletion",
+            (),
+            {
+                "content": "agent changed files",
+                "usage": UsageSummary(),
+                "artifacts": type(
+                    "Artifacts",
+                    (),
+                    {
+                        "changed_files": ["src/app.py"],
+                        "diff_stat": " src/app.py | 2 ++",
+                        "git_diff": "diff --git a/src/app.py b/src/app.py\n+print('hi')\n",
+                    },
+                )(),
+            },
+        )()
+
+    monkeypatch.setattr("aethr.agents.OpenCodeAgentClient.complete", fake_complete)
+
+    results = run_workflow("do the thing", config)
+
+    assert results[0].artifacts is not None
+    assert results[0].artifacts.changed_files == ["src/app.py"]
+    assert "print('hi')" in results[0].artifacts.git_diff
+
+
 def test_build_workflow_prompts_does_not_call_models() -> None:
     config = WorkflowConfig(
         workflow="preview",
@@ -158,10 +200,19 @@ def test_run_workflow_emits_checkpoint_on_failure(monkeypatch: pytest.MonkeyPatc
     def fake_complete(self, prompt, on_chunk=None):
         calls["count"] += 1
         if calls["count"] == 1:
-            return CompletionResult(
-                content="plan output",
-                usage=UsageSummary(prompt_tokens=10, completion_tokens=4, total_tokens=14, cost=0.01),
-            )
+            return type(
+                "Completion",
+                (),
+                {
+                    "content": "plan output",
+                    "usage": UsageSummary(prompt_tokens=10, completion_tokens=4, total_tokens=14, cost=0.01),
+                    "artifacts": StepArtifacts(
+                        changed_files=["src/app.py"],
+                        diff_stat=" src/app.py | 1 +",
+                        git_diff="diff --git a/src/app.py b/src/app.py\n+print('hi')\n",
+                    ),
+                },
+            )()
         raise LLMError("boom")
 
     monkeypatch.setattr("aethr.executor.ModelClient.complete", fake_complete)
@@ -174,3 +225,5 @@ def test_run_workflow_emits_checkpoint_on_failure(monkeypatch: pytest.MonkeyPatc
     checkpoint = serialize_checkpoint(excinfo.value.completed_results)
     restored = load_checkpoint(checkpoint)
     assert restored[0].step_id == "plan"
+    assert restored[0].artifacts is not None
+    assert restored[0].artifacts.changed_files == ["src/app.py"]

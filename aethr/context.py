@@ -9,7 +9,11 @@ from pathlib import Path
 MAX_CONTEXT_CHARS = 40_000
 
 
-def collect_context(sources: list[str], root: Path | str = ".") -> str:
+def collect_context(
+    sources: list[str],
+    root: Path | str = ".",
+    latest_diff: str | None = None,
+) -> str:
     """Collect user-declared context sources into prompt text."""
 
     if not sources:
@@ -35,6 +39,8 @@ def collect_source(source: str, root: Path) -> str:
 
     if source == "git_diff":
         return context_block(source, read_git_diff(root))
+    if source == "latest_diff":
+        return context_block(source, latest_diff or "[latest diff unavailable]")
     if source.startswith("file:"):
         path = source.removeprefix("file:")
         resolved = relative_path(root, path)

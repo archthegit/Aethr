@@ -52,6 +52,8 @@ Aethr copies a YAML preset into `.aethr.yaml`. Edit it like any other project
 file. The default `plan-implement-review` preset uses OpenCode for the
 implementation step, so install the `opencode` CLI if you want that step to
 edit the working tree.
+In that preset, the reviewer reads `latest_diff`, meaning the most recent
+implementation diff rather than the whole repository diff.
 
 ## How Aethr Works
 
@@ -60,6 +62,8 @@ edit the working tree.
 - **Steps**: sequential units of work. Aethr runs them in order.
 - **Roles**: named responsibilities such as `planner`, `reviewer`, or `writer`.
 - **Context**: explicit repo input declared per step.
+- **Artifacts**: structured implementation output such as changed files and
+  diffs, passed forward in memory to later steps.
 - **Model routing**: each role can point at a different LiteLLM model.
 
 Each step receives the task, prior step outputs, and its declared context. The
@@ -90,15 +94,17 @@ For real code changes, Aethr can hand an implementation step to OpenCode:
   - id: implement
     role: implementer
     backend: opencode
+    unsafe_permissions: true
 ```
 
 That keeps the workflow explicit while letting a real coding agent edit the
-working tree.
+working tree. Leave `unsafe_permissions` off if you want OpenCode to keep its
+normal permission checks.
 
 ## Built-In Workflows
 
 - `plan-implement-review`: plan a task, then hand implementation to OpenCode
-  before review.
+  before reviewing the resulting `latest_diff`.
 - `review-existing-diff`: review the current working tree diff.
 - `debug-failing-test`: diagnose a failing test, propose a fix, review it.
 - `add-tests`: plan, draft, and review focused test coverage.
@@ -136,9 +142,14 @@ to understand: the YAML shows exactly what each step can see.
 Supported context sources:
 
 - `git_diff`: runs `git diff --no-ext-diff`.
+- `latest_diff`: the most recent implementation diff from the prior step.
 - `file:<path>`: reads one UTF-8 file relative to the project root.
 - `glob:<pattern>`: reads matching UTF-8 files relative to the project root,
   with a small content cap.
+
+Use `git_diff` when a step should inspect the whole working tree. Use
+`latest_diff` when a later step should inspect only the most recent
+implementation output from the workflow itself.
 
 Example:
 
