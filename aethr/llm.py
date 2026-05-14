@@ -46,7 +46,8 @@ class ModelClient:
         dotenv_path = find_dotenv(usecwd=True)
         if dotenv_path:
             load_dotenv(dotenv_path, override=False)
-        self.model = os.getenv("AETHR_MODEL") or model
+        self.requested_model = os.getenv("AETHR_MODEL") or model
+        self.model = self._normalize_model_name(self.requested_model)
         self.live = os.getenv("AETHR_LIVE") == "1" or os.getenv("AETHR_MODEL") is not None
 
     def complete(self, prompt: str, on_chunk: ChunkCallback | None = None) -> CompletionResult:
@@ -88,12 +89,23 @@ class ModelClient:
             usage = self._summarize_usage(prompt, content, response_usage=final_usage)
             return CompletionResult(content=content, usage=usage)
         except Exception as exc:
-            raise LLMError(f"Model call failed for '{self.model}': {exc}") from exc
+            raise LLMError(f"Model call failed for '{self.requested_model}': {exc}") from exc
 
     def _litellm_completion(self, **kwargs: Any) -> Any:
         from litellm import completion
 
         return completion(**kwargs)
+
+    def _normalize_model_name(self, model: str | None) -> str | None:
+        """Convert Relay's provider:model form into LiteLLM's provider/model form."""
+
+        if model is None:
+            return None
+        if ":" in model and "/" not in model:
+            provider, name = model.split(":", 1)
+            if provider and name:
+                return f"{provider}/{name}"
+        return model
 
     def _mock_complete(self, prompt: str) -> str:
         """Return a deterministic placeholder completion."""

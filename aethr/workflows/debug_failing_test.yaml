@@ -5,8 +5,8 @@ roles:
   reviewer: Review the diagnosis and proposed fix for correctness.
 
 models:
-  debugger: anthropic:claude-sonnet
-  reviewer: openai:gpt-5.5
+  debugger: openai:gpt-5.3-codex
+  reviewer: openai:gpt-4o-mini
 
 steps:
   - id: diagnose

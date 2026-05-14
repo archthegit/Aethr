@@ -5,8 +5,8 @@ roles:
   reviewer: Review documentation for accuracy, clarity, and omissions.
 
 models:
-  writer: openai:gpt-5.5
-  reviewer: openai:gpt-5.5
+  writer: openai:gpt-4o-mini
+  reviewer: openai:gpt-4o-mini
 
 steps:
   - id: draft-docs

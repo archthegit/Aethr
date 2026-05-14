@@ -4,7 +4,7 @@ roles:
   reviewer: Review the provided task context as if it were an existing diff.
 
 models:
-  reviewer: openai:gpt-5.5
+  reviewer: openai:gpt-4o-mini
 
 steps:
   - id: review

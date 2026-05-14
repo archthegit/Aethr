@@ -34,9 +34,18 @@ pip install -e ".[dev]"
 
 ## Quickstart
 
+For reviewing the current repo:
+
 ```bash
 aethr init review-existing-diff
 aethr run "review my current changes before I commit"
+```
+
+For a multi-model implementation workflow:
+
+```bash
+aethr init plan-implement-review --force
+aethr run "add support for loading .env files"
 ```
 
 Aethr copies a YAML preset into `.aethr.yaml`. Edit it like any other project
@@ -64,7 +73,7 @@ roles:
   reviewer: Review the provided task context as if it were an existing diff.
 
 models:
-  reviewer: openai:gpt-5.5
+  reviewer: openai:gpt-4o-mini
 
 steps:
   - id: review
@@ -101,6 +110,9 @@ The `examples/` directory contains small workflow files you can copy from:
 - `examples/review-existing-diff.yaml`
 - `examples/add-tests.yaml`
 - `examples/docs-sync.yaml`
+
+These examples intentionally show different providers across roles so you can
+see routing in practice, not just the default presets.
 
 ## Explicit Context
 
@@ -156,7 +168,7 @@ AETHR_LIVE=1 aethr run "review my current changes"
 Override every configured model with one LiteLLM model:
 
 ```bash
-AETHR_MODEL=openai:gpt-5.5 aethr run "review my current changes"
+AETHR_MODEL=openai:gpt-4o-mini aethr run "review my current changes"
 ```
 
 ## Philosophy
@@ -178,9 +190,10 @@ Aethr intentionally avoids persistence, replay systems, caches, plugins, DAGs,
 async runtimes, vector search, automatic retrieval, memory systems, and agent
 abstractions.
 
-If a workflow fails, Aethr prints a copyable JSON checkpoint for the completed
-steps. Pass that back with `--resume-checkpoint` to continue from the next
-step without rerunning the earlier ones.
+If a workflow fails, Aethr writes a temporary checkpoint file and prints a
+compact resume command. Pass that checkpoint back with `--resume-checkpoint`
+to continue from the next step without rerunning the earlier ones. Use
+`--verbose` if you want the raw checkpoint JSON.
 
 ## Future Work
 

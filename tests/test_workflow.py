@@ -46,7 +46,9 @@ def test_context_presets_declare_explicit_context(tmp_path: Path) -> None:
     init_workflow("add-tests", destination=tests_config)
     init_workflow("debug-failing-test", destination=debug_config)
 
-    assert "context:\n      - git_diff" in review_config.read_text(encoding="utf-8")
+    review_text = review_config.read_text(encoding="utf-8")
+    assert "context:\n      - git_diff" in review_text
+    assert "anthropic:" not in review_text
     docs_text = docs_config.read_text(encoding="utf-8")
     assert "- git_diff" in docs_text
     assert "- file:README.md" in docs_text
@@ -54,7 +56,9 @@ def test_context_presets_declare_explicit_context(tmp_path: Path) -> None:
     tests_text = tests_config.read_text(encoding="utf-8")
     assert "- glob:src/**/*.py" in tests_text
     assert "- glob:tests/**/*.py" in tests_text
+    assert "anthropic:" not in tests_text
     debug_text = debug_config.read_text(encoding="utf-8")
     assert "- git_diff" in debug_text
     assert "- glob:src/**/*.py" in debug_text
     assert "- glob:tests/**/*.py" in debug_text
+    assert "anthropic:" not in debug_text

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import shlex
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +19,7 @@ from aethr.executor import (
     StepResult,
     WorkflowStepError,
     build_workflow_prompts,
+    format_token_count,
     load_checkpoint,
     run_workflow,
     serialize_checkpoint,
@@ -72,6 +76,14 @@ def run(
         bool,
         typer.Option("--show-prompt", help="Print exact step prompts without calling models."),
     ] = False,
+    stream: Annotated[
+        bool,
+        typer.Option("--stream/--no-stream", help="Stream step output live instead of using panels."),
+    ] = True,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Print the full checkpoint JSON on failure."),
+    ] = False,
     resume_checkpoint: Annotated[
         str | None,
         typer.Option(
@@ -111,13 +123,13 @@ def run(
             config,
             previous_results=previous_results,
             on_step_start=_print_step_start,
-            on_step_chunk=_print_step_chunk,
-            on_step_result=_print_step_result,
+            on_step_chunk=_print_step_chunk if stream else None,
+            on_step_result=_print_step_status if stream else _print_step_result,
         )
     except LLMError as exc:
         raise typer.BadParameter(str(exc)) from exc
     except WorkflowStepError as exc:
-        _print_workflow_failure(exc)
+        _print_workflow_failure(task, exc, verbose=verbose)
         raise typer.Exit(code=1) from exc
 
     console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
@@ -153,7 +165,21 @@ def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
     console.print()
-    console.print(Panel(result.content, border_style="green"))
+    console.print(Panel(result.content, title=result.step_id, border_style="green"))
+
+
+def _print_step_status(result: StepResult) -> None:
+    """Print a compact completion line after a streamed step."""
+
+    usage = ""
+    if result.usage is not None:
+        usage = f" [dim]{format_token_count(result.usage.total_tokens)} ${result.usage.cost:.2f}[/dim]"
+
+    console.print()
+    console.print(
+        f"[green]✓[/green] [bold]{result.step_id}[/bold] "
+        f"[dim]role={result.metadata['role']} model={result.metadata['model']}[/dim]{usage}"
+    )
 
 
 def _print_step_prompt(planned: StepPrompt) -> None:
@@ -188,15 +214,78 @@ def _read_text_or_file(value: str) -> str:
     return value
 
 
-def _print_workflow_failure(error: WorkflowStepError) -> None:
-    """Print a resumable checkpoint when a step fails."""
+def _print_workflow_failure(task: str, error: WorkflowStepError, *, verbose: bool = False) -> None:
+    """Print a compact failure summary and a resumable checkpoint path."""
 
     console.print()
     console.print(f"[red]Workflow failed[/red] at step [bold]{error.step_id}[/bold]")
-    console.print(Panel(str(error.cause), title="Error", border_style="red"))
+    console.print(f"[bold]Reason:[/bold] {friendly_failure_reason(error)}")
+
     checkpoint = serialize_checkpoint(error.completed_results)
-    console.print(Panel(checkpoint, title="Resume checkpoint", border_style="red"))
-    console.print("[dim]Save the JSON above and pass it back with --resume-checkpoint @file.json.[/dim]")
+    checkpoint_path = write_checkpoint_file(checkpoint)
+    resume_command = f"aethr run {shlex.quote(task)} --resume-checkpoint @{checkpoint_path}"
+
+    console.print("[bold]To resume:[/bold]")
+    console.print("1. Fix the missing credential or other issue.")
+    console.print(f"Resume command: {resume_command}")
+
+    if verbose:
+        console.print()
+        console.print(Panel(checkpoint, title="Resume checkpoint", border_style="red"))
+    else:
+        console.print(f"[dim]Checkpoint saved to {checkpoint_path}[/dim]")
+
+
+def friendly_failure_reason(error: WorkflowStepError) -> str:
+    """Reduce noisy provider errors into a compact terminal reason."""
+
+    message = str(error.cause)
+    provider = provider_from_message(message)
+    lower = message.lower()
+    if (
+        "api_key client option must be set" in lower
+        or "authenticationerror" in lower
+        or "missing key" in lower
+        or "api key" in lower
+    ):
+        if provider == "anthropic":
+            return "Missing Anthropic API key."
+        if provider == "openai":
+            return "Missing OpenAI API key."
+        if provider in {"google", "gemini"}:
+            return "Missing Google API key."
+        return "Missing API key."
+    return message.rstrip(".")
+
+
+def provider_from_message(message: str) -> str | None:
+    """Extract a provider name from an error message when possible."""
+
+    match = re.search(r"for '([^']+)'", message)
+    if not match:
+        return None
+    model = match.group(1)
+    if ":" in model:
+        provider = model.split(":", 1)[0]
+    elif "/" in model:
+        provider = model.split("/", 1)[0]
+    else:
+        provider = model
+    return provider.lower()
+
+
+def write_checkpoint_file(checkpoint: str) -> str:
+    """Persist the resume checkpoint to a temp file for copy-free recovery."""
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="aethr-checkpoint-",
+        suffix=".json",
+        delete=False,
+    ) as handle:
+        handle.write(checkpoint)
+        return handle.name
 
 
 def _resolve_workflow_choice(choice: str, workflows: list[str]) -> str:

@@ -4,7 +4,7 @@ roles:
   reviewer: Review the current working tree diff before commit.
 
 models:
-  reviewer: openai:gpt-5.5
+  reviewer: anthropic/claude-sonnet-4-20250514
 
 steps:
   - id: review

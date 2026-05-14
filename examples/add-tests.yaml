@@ -6,9 +6,9 @@ roles:
   reviewer: Review the proposed tests for correctness, brittleness, and missing assertions.
 
 models:
-  test-planner: openai:gpt-5.5
-  test-writer: anthropic:claude-sonnet
-  reviewer: openai:gpt-5.5
+  test-planner: google/gemini-2.5-pro
+  test-writer: openai:gpt-5.3-codex
+  reviewer: anthropic/claude-sonnet-4-20250514
 
 steps:
   - id: plan-tests

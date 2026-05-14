@@ -144,7 +144,7 @@ def build_step_prompt(
     )
     metadata = {
         "role": step.role,
-        "model": model.model or "mock",
+        "model": model.requested_model or "mock",
         "context_sources": str(len(step.context)),
     }
     return StepPrompt(step_id=step.id, prompt=prompt, metadata=metadata)
