@@ -196,6 +196,24 @@ Override every configured model with one LiteLLM model:
 AETHR_MODEL=openai:gpt-4o-mini aethr run "review my current changes"
 ```
 
+## Auth
+
+Use `aethr auth login` to write a provider key into the project `.env` file.
+Aethr loads that file automatically on the next run.
+
+```bash
+aethr auth login openai
+aethr auth status
+```
+
+Supported providers in the helper are:
+
+- `openai`
+- `anthropic`
+- `google` / `gemini`
+- `openrouter`
+- `xai`
+
 ## Philosophy
 
 Aethr should feel like:

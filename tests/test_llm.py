@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from aethr.llm import LLMError, ModelClient
+from aethr.llm import LLMError, ModelClient, normalize_model_name
 
 
 def test_model_client_wraps_live_model_failures(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,3 +47,15 @@ def test_model_client_normalizes_provider_prefixed_models(monkeypatch: pytest.Mo
     client = ModelClient("openai:gpt-5.5")
 
     assert client.model == "openai/gpt-5.5"
+
+
+def test_normalize_model_name_converts_provider_prefix_with_slashes() -> None:
+    model = "openai:meta-llama/llama-3.1-8b-instruct"
+
+    assert normalize_model_name(model) == "openai/meta-llama/llama-3.1-8b-instruct"
+
+
+def test_normalize_model_name_preserves_raw_colon_model_ids() -> None:
+    model = "ft:gpt-4o-mini-2024-07-18:org-abc123:custom"
+
+    assert normalize_model_name(model) == model

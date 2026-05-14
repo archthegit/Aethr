@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from aethr import __version__
+from aethr.auth import env_var_for, login as auth_login, status as auth_status
 from aethr.artifacts import format_artifact_block, format_artifact_summary
 from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
 from aethr.executor import (
@@ -35,6 +36,8 @@ from aethr.workflow import WorkflowTemplateError, available_workflows, init_work
 
 app = typer.Typer(help="Explicit, reproducible AI coding workflows.")
 console = Console()
+auth_app = typer.Typer(help="Manage project-local API key credentials.")
+app.add_typer(auth_app, name="auth")
 
 
 @app.callback()
@@ -144,6 +147,48 @@ def version() -> None:
     """Print the Aethr version."""
 
     console.print(f"Aethr {__version__}")
+
+
+@auth_app.command()
+def status(
+    env_file: Annotated[
+        str,
+        typer.Option("--env-file", help="Project .env file to inspect."),
+    ] = ".env",
+) -> None:
+    """Show which provider credentials are available."""
+
+    file_status = auth_status(env_file)
+    console.print(f"[bold]Credential status[/bold] ({env_file})")
+    for provider, state in sorted(file_status.items()):
+        console.print(f"  {provider}: {state}")
+
+
+@auth_app.command()
+def login(
+    provider: Annotated[str, typer.Argument(help="Provider to store credentials for.")],
+    key: Annotated[
+        str | None,
+        typer.Option("--key", help="API key value. Prompts if omitted."),
+    ] = None,
+    env_file: Annotated[
+        str,
+        typer.Option("--env-file", help="Project .env file to update."),
+    ] = ".env",
+) -> None:
+    """Store a provider API key in the project .env file."""
+
+    try:
+        env_var, _ = env_var_for(provider)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    value = key or typer.prompt(f"{env_var}", hide_input=True)
+    if not value.strip():
+        raise typer.BadParameter("API key cannot be empty")
+
+    _, path = auth_login(provider, value.strip(), env_file=env_file)
+    console.print(f"[green]Stored[/green] {env_var} in [bold]{path}[/bold]")
 
 
 def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:

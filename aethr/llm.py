@@ -44,7 +44,7 @@ def normalize_model_name(model: str | None) -> str | None:
 
     if model is None:
         return None
-    if ":" in model and "/" not in model:
+    if model.count(":") == 1:
         provider, name = model.split(":", 1)
         if provider and name:
             return f"{provider}/{name}"
