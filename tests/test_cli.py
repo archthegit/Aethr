@@ -1,6 +1,9 @@
+import shlex
+
+import pytest
 from typer.testing import CliRunner
 
-from aethr.cli import app
+from aethr.cli import app, friendly_failure_reason
 from aethr.config import WorkflowConfig, WorkflowStep
 from aethr.executor import StepPrompt, StepResult, WorkflowStepError
 from aethr.llm import LLMError
@@ -12,7 +15,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.7" in result.output
+    assert "Aethr 0.1.8" in result.output
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:
@@ -90,6 +93,130 @@ def test_run_failure_verbose_shows_checkpoint(monkeypatch) -> None:
     assert '"step_id": "plan"' in result.output
 
 
+def test_run_failure_resume_command_quotes_checkpoint_path(monkeypatch) -> None:
+    _assert_resume_command_uses_single_safe_checkpoint_argument(
+        monkeypatch,
+        "/tmp/checkpoint folder/with 'quote'.json",
+    )
+
+
+@pytest.mark.parametrize(
+    "checkpoint_path",
+    [
+        "/tmp/checkpoint folder/with spaces.json",
+        "/tmp/checkpoint[1]{draft}.json",
+        "/tmp/checkpoint;$HOME&&echo boom.json",
+        '/tmp/checkpoint"double"\'single\'.json',
+        r"C:\\Users\\Jane Doe\\AppData\\Local\\Temp\\checkpoint'state.json",
+    ],
+)
+def test_run_failure_resume_command_handles_shell_sensitive_paths(monkeypatch, checkpoint_path: str) -> None:
+    _assert_resume_command_uses_single_safe_checkpoint_argument(monkeypatch, checkpoint_path)
+
+
+def _assert_resume_command_uses_single_safe_checkpoint_argument(monkeypatch, checkpoint_path: str) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="plan-implement-review",
+        roles={"planner": "Plan.", "implementer": "Implement.", "reviewer": "Review."},
+        models={
+            "planner": "openai:gpt-4o-mini",
+            "implementer": "openai:gpt-5.3-codex",
+            "reviewer": "openai:gpt-4o-mini",
+        },
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="implement", role="implementer"),
+            WorkflowStep(id="review", role="reviewer"),
+        ],
+    )
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr("aethr.cli.write_checkpoint_file", lambda checkpoint: checkpoint_path)
+    monkeypatch.setattr(
+        "aethr.cli.run_workflow",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            WorkflowStepError(
+                "implement",
+                [StepResult(step_id="plan", content="seed")],
+                LLMError("Model call failed for 'anthropic/claude-sonnet-4-20250514': missing key"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["run", "add support for loading .env files"])
+
+    assert result.exit_code == 1
+    resume_command = _extract_resume_command(result.output)
+    command_parts = shlex.split(resume_command)
+    assert command_parts[:3] == ["aethr", "run", "add support for loading .env files"]
+    assert command_parts[3] == "--resume-checkpoint"
+    assert command_parts[4] == f"@{checkpoint_path}"
+
+
+def _extract_resume_command(output: str) -> str:
+    for line in output.splitlines():
+        if line.startswith("Resume command:"):
+            return line.replace("Resume command:", "", 1).strip()
+    raise AssertionError("Resume command line was not printed")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Model call failed for 'openai/gpt-4o-mini': AuthenticationError: invalid_api_key",
+        "Model call failed for 'anthropic/claude-sonnet-4-20250514': API key expired",
+        "Model call failed for 'openai/gpt-4o-mini': Incorrect API key provided",
+        "Model call failed for 'openai/gpt-4o-mini': Unauthorized: invalid API key",
+        "Model call failed for 'openai/gpt-4o-mini': invalid API key; missing key in previous request",
+    ],
+)
+def test_friendly_failure_reason_does_not_label_invalid_or_expired_keys_as_missing(message: str) -> None:
+    reason = friendly_failure_reason(
+        WorkflowStepError(
+            "implement",
+            [],
+            LLMError(message),
+        )
+    )
+
+    assert reason == message
+    assert "Missing" not in reason
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Model call failed for 'openai/gpt-4o-mini': API key client option must be set",
+            "Missing OpenAI API key.",
+        ),
+        (
+            "Model call failed for 'anthropic/claude-sonnet-4-20250514': missing key",
+            "Missing Anthropic API key.",
+        ),
+        (
+            "Model call failed for 'gemini/gemini-2.5-flash': missing api key",
+            "Missing Google API key.",
+        ),
+        (
+            "Authentication failed: no api key",
+            "Missing API key.",
+        ),
+    ],
+)
+def test_friendly_failure_reason_labels_only_true_missing_key_cases(message: str, expected: str) -> None:
+    reason = friendly_failure_reason(
+        WorkflowStepError(
+            "implement",
+            [],
+            LLMError(message),
+        )
+    )
+
+    assert reason == expected
+
+
 def test_run_streams_chunks_and_prints_compact_status(monkeypatch) -> None:
     runner = CliRunner()
     config = WorkflowConfig(
@@ -156,3 +283,76 @@ def test_run_no_stream_prints_full_result_panel(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "full content" in result.output
     assert "live chunk" not in result.output
+
+
+def test_run_no_stream_renders_markdown_without_literal_markup(monkeypatch) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="panel",
+        roles={"reviewer": "Review."},
+        models={"reviewer": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="review", role="reviewer")],
+    )
+
+    def fake_run_workflow(task, config, previous_results=None, on_step_start=None, on_step_chunk=None, on_step_result=None):
+        planned = StepPrompt(
+            step_id="review",
+            prompt="prompt",
+            metadata={"role": "reviewer", "model": "openai:gpt-4o-mini", "context_sources": "0"},
+        )
+        if on_step_start is not None:
+            on_step_start(1, 1, planned)
+        result = StepResult(
+            step_id="review",
+            content="Findings:\n\n1. **High Severity**: Fix the bug.\n2. **Low Severity**: Add a test.",
+            metadata=planned.metadata,
+        )
+        if on_step_result is not None:
+            on_step_result(result)
+        return [result]
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr("aethr.cli.run_workflow", fake_run_workflow)
+
+    result = runner.invoke(app, ["run", "review my changes", "--no-stream"])
+
+    assert result.exit_code == 0
+    assert "High Severity" in result.output
+    assert "Low Severity" in result.output
+    assert "**High Severity**" not in result.output
+    assert "**Low Severity**" not in result.output
+
+
+def test_run_streams_bracketed_chunks_without_markup(monkeypatch) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="stream",
+        roles={"reviewer": "Review."},
+        models={"reviewer": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="review", role="reviewer")],
+    )
+
+    def fake_run_workflow(task, config, previous_results=None, on_step_start=None, on_step_chunk=None, on_step_result=None):
+        planned = StepPrompt(
+            step_id="review",
+            prompt="prompt",
+            metadata={"role": "reviewer", "model": "openai:gpt-4o-mini", "context_sources": "0"},
+        )
+        if on_step_start is not None:
+            on_step_start(1, 1, planned)
+        if on_step_chunk is not None:
+            on_step_chunk("review", "[/tmp/checkpoint folder/with spaces.json]")
+            on_step_chunk("review", "<tag>plain text</tag>")
+        result = StepResult(step_id="review", content="full content", metadata=planned.metadata)
+        if on_step_result is not None:
+            on_step_result(result)
+        return [result]
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr("aethr.cli.run_workflow", fake_run_workflow)
+
+    result = runner.invoke(app, ["run", "review my changes"])
+
+    assert result.exit_code == 0
+    assert "[/tmp/checkpoint folder/with spaces.json]" in result.output
+    assert "<tag>plain text</tag>" in result.output

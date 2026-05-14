@@ -11,6 +11,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich import box
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -213,20 +214,28 @@ def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:
 def _print_step_chunk(_step_id: str, chunk: str) -> None:
     """Stream a chunk of model output."""
 
-    console.print(chunk, end="")
+    console.print(chunk, end="", markup=False)
 
 
 def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
     console.print()
-    parts = []
     if result.content.strip():
-        parts.append(result.content.rstrip())
-    if result.artifacts is not None:
-        parts.append(format_artifact_summary(result.artifacts))
-    body = "\n\n".join(parts) if parts else "[no content]"
+        body = Markdown(result.content.rstrip())
+    else:
+        body = "[no content]"
     console.print(Panel(body, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
+
+    if result.artifacts is not None:
+        console.print(
+            Panel(
+                format_artifact_summary(result.artifacts),
+                title=f"{result.step_id} artifacts",
+                border_style="cyan",
+                box=box.SIMPLE,
+            )
+        )
 
 
 def _print_step_status(result: StepResult) -> None:
@@ -361,11 +370,11 @@ def _print_workflow_failure(task: str, error: WorkflowStepError, *, verbose: boo
 
     checkpoint = serialize_checkpoint(error.completed_results)
     checkpoint_path = write_checkpoint_file(checkpoint)
-    resume_command = f"aethr run {shlex.quote(task)} --resume-checkpoint @{checkpoint_path}"
+    resume_command = shlex.join(["aethr", "run", task, "--resume-checkpoint", f"@{checkpoint_path}"])
 
     console.print("[bold]To resume:[/bold]")
     console.print("1. Fix the missing credential or other issue.")
-    console.print(f"Resume command: {resume_command}")
+    typer.echo(f"Resume command: {resume_command}")
 
     if verbose:
         console.print()
@@ -381,10 +390,21 @@ def friendly_failure_reason(error: WorkflowStepError) -> str:
     provider = provider_from_message(message)
     lower = message.lower()
     if (
+        "invalid_api_key" in lower
+        or "invalid api key" in lower
+        or "incorrect api key" in lower
+        or "api key expired" in lower
+        or "expired api key" in lower
+        or "key expired" in lower
+    ):
+        return message.rstrip(".")
+    if (
         "api_key client option must be set" in lower
-        or "authenticationerror" in lower
-        or "missing key" in lower
-        or "api key" in lower
+        or "api key client option must be set" in lower
+        or "missing api key" in lower
+        or "no api key" in lower
+        or "api key is required" in lower
+        or ("missing key" in lower and provider is not None)
     ):
         if provider == "anthropic":
             return "Missing Anthropic API key."

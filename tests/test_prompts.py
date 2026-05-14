@@ -17,3 +17,17 @@ def test_step_prompt_includes_role_specific_instructions() -> None:
     assert "Find the root cause." in prompt
     assert "Explicit repo context:" in prompt
     assert "repo context" in prompt
+
+
+def test_reviewer_prompt_requests_explicit_severities() -> None:
+    prompt = step_prompt(
+        task="review the change",
+        step=WorkflowStep(id="review", role="reviewer"),
+        previous_context="previous output",
+        explicit_context="repo context",
+        role_description="Review the diff.",
+    )
+
+    assert "Use explicit severities" in prompt
+    assert "high" in prompt
+    assert "Review status: pass" in prompt
