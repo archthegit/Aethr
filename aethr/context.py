@@ -23,8 +23,28 @@ def collect_context(
     remaining = MAX_CONTEXT_CHARS
     blocks: list[str] = []
 
+    def collect_source(source: str) -> str:
+        """Collect one supported context source."""
+
+        if source == "git_diff":
+            return context_block(source, read_git_diff(project_root))
+        if source == "latest_diff":
+            return context_block(source, latest_diff or "[latest diff unavailable]")
+        if source.startswith("file:"):
+            path = source.removeprefix("file:")
+            resolved = relative_path(project_root, path)
+            if resolved is None:
+                return context_block(source, f"[context path must be relative to project root: {path}]")
+            return context_block(source, read_file(resolved))
+        if source.startswith("glob:"):
+            pattern = source.removeprefix("glob:")
+            if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+                return context_block(source, f"[glob pattern must be relative to project root: {pattern}]")
+            return context_block(source, read_glob(project_root, pattern))
+        return context_block(source, f"[unsupported context source: {source}]")
+
     for source in sources:
-        block = collect_source(source, project_root)
+        block = collect_source(source)
         trimmed, remaining = trim_to_budget(block, remaining)
         blocks.append(trimmed)
         if remaining <= 0:
@@ -32,27 +52,6 @@ def collect_context(
             break
 
     return "\n\n".join(blocks)
-
-
-def collect_source(source: str, root: Path) -> str:
-    """Collect one supported context source."""
-
-    if source == "git_diff":
-        return context_block(source, read_git_diff(root))
-    if source == "latest_diff":
-        return context_block(source, latest_diff or "[latest diff unavailable]")
-    if source.startswith("file:"):
-        path = source.removeprefix("file:")
-        resolved = relative_path(root, path)
-        if resolved is None:
-            return context_block(source, f"[context path must be relative to project root: {path}]")
-        return context_block(source, read_file(resolved))
-    if source.startswith("glob:"):
-        pattern = source.removeprefix("glob:")
-        if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
-            return context_block(source, f"[glob pattern must be relative to project root: {pattern}]")
-        return context_block(source, read_glob(root, pattern))
-    return context_block(source, f"[unsupported context source: {source}]")
 
 
 def read_git_diff(root: Path) -> str:

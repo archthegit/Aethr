@@ -27,6 +27,19 @@ def format_artifact_block(artifacts: StepArtifacts, diff_limit: int = 12_000) ->
     return "\n\n".join(blocks) if blocks else "[no artifacts]"
 
 
+def format_artifact_summary(artifacts: StepArtifacts, diff_limit: int = 6_000) -> str:
+    """Render a compact terminal-facing artifact summary."""
+
+    blocks: list[str] = []
+    if artifacts.changed_files:
+        blocks.append("Changed files:\n" + "\n".join(f"- {path}" for path in artifacts.changed_files))
+    if artifacts.diff_stat.strip():
+        blocks.append("Diff stat:\n" + artifacts.diff_stat.rstrip())
+    if artifacts.git_diff.strip():
+        blocks.append("Diff preview:\n" + truncate_text(artifacts.git_diff, diff_limit))
+    return "\n\n".join(blocks) if blocks else "[no artifacts]"
+
+
 def format_step_result_for_prompt(step_id: str, content: str, artifacts: StepArtifacts | None) -> str:
     """Render a completed step for prompt context."""
 

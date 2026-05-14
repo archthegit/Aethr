@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from aethr import __version__
-from aethr.artifacts import format_artifact_block
+from aethr.artifacts import format_artifact_block, format_artifact_summary
 from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
 from aethr.executor import (
     StepPrompt,
@@ -178,7 +178,7 @@ def _print_step_result(result: StepResult) -> None:
     if result.content.strip():
         parts.append(result.content.rstrip())
     if result.artifacts is not None:
-        parts.append(format_artifact_block(result.artifacts))
+        parts.append(format_artifact_summary(result.artifacts))
     body = "\n\n".join(parts) if parts else "[no content]"
     console.print(Panel(body, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
 
