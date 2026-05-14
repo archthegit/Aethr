@@ -15,7 +15,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.9" in result.output
+    assert "Aethr 0.1.10" in result.output
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:
@@ -356,3 +356,41 @@ def test_run_streams_bracketed_chunks_without_markup(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "[/tmp/checkpoint folder/with spaces.json]" in result.output
     assert "<tag>plain text</tag>" in result.output
+
+
+def test_run_streams_markdown_chunks_without_literal_markup(monkeypatch) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="stream",
+        roles={"planner": "Plan."},
+        models={"planner": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="plan", role="planner")],
+    )
+
+    def fake_run_workflow(task, config, previous_results=None, on_step_start=None, on_step_chunk=None, on_step_result=None):
+        planned = StepPrompt(
+            step_id="plan",
+            prompt="prompt",
+            metadata={"role": "planner", "model": "openai:gpt-4o-mini", "context_sources": "0"},
+        )
+        if on_step_start is not None:
+            on_step_start(1, 1, planned)
+        if on_step_chunk is not None:
+            on_step_chunk("plan", "### Implementation Plan\n\n**Objective:** Fix the bug.\n")
+            on_step_chunk("plan", "1. **High Severity**: Handle edge cases.\n")
+        result = StepResult(step_id="plan", content="full content", metadata=planned.metadata)
+        if on_step_result is not None:
+            on_step_result(result)
+        return [result]
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr("aethr.cli.run_workflow", fake_run_workflow)
+
+    result = runner.invoke(app, ["run", "review my changes"])
+
+    assert result.exit_code == 0
+    assert "Implementation Plan" in result.output
+    assert "Objective: Fix the bug." in result.output
+    assert "High Severity" in result.output
+    assert "###" not in result.output
+    assert "**" not in result.output

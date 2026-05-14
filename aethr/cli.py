@@ -6,14 +6,17 @@ import re
 import shlex
 import tempfile
 import textwrap
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich import box
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from aethr import __version__
 from aethr.auth import env_var_for, login as auth_login, status as auth_status
@@ -40,6 +43,19 @@ app = typer.Typer(help="Explicit, reproducible AI coding workflows.")
 console = Console()
 auth_app = typer.Typer(help="Manage project-local API key credentials.")
 app.add_typer(auth_app, name="auth")
+
+
+@dataclass
+class _StreamRenderState:
+    """Live render state for one streaming step."""
+
+    step_id: str
+    content: str = ""
+    live: Live | None = None
+
+
+_STREAM_RENDERING_ENABLED = False
+_ACTIVE_STREAM: _StreamRenderState | None = None
 
 
 @app.callback()
@@ -113,6 +129,7 @@ def run(
     if previous_results:
         console.print(f"[dim]Resuming from {len(previous_results)} completed step(s).[/dim]")
     render_workflow_overview(config, previous_results=previous_results)
+    _set_stream_rendering_enabled(stream)
 
     if show_prompt:
         console.print("[bold]Mode[/bold] prompt preview")
@@ -136,10 +153,14 @@ def run(
             on_step_result=_print_step_status if stream else _print_step_result,
         )
     except LLMError as exc:
+        _stop_stream_render()
         raise typer.BadParameter(str(exc)) from exc
     except WorkflowStepError as exc:
+        _stop_stream_render()
         _print_workflow_failure(task, exc, verbose=verbose)
         raise typer.Exit(code=1) from exc
+    finally:
+        _set_stream_rendering_enabled(False)
 
     console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
 
@@ -196,6 +217,7 @@ def login(
 def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:
     """Print a compact header before a step begins."""
 
+    _stop_stream_render()
     backend = planned.metadata.get("backend", "model")
     backend_text = f" backend={backend}" if backend != "model" else ""
     permissions_text = _permissions_suffix(planned.metadata)
@@ -209,12 +231,18 @@ def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:
     )
     console.print()
     console.print(Panel(details, border_style="cyan", box=box.SIMPLE))
+    if _STREAM_RENDERING_ENABLED:
+        _start_stream_render(planned.step_id)
 
 
 def _print_step_chunk(_step_id: str, chunk: str) -> None:
     """Stream a chunk of model output."""
 
-    console.print(chunk, end="", markup=False)
+    if _append_stream_chunk(chunk):
+        return
+    cleaned = _clean_display_text(chunk)
+    if cleaned:
+        console.print(cleaned, end="", markup=False)
 
 
 def _print_step_result(result: StepResult) -> None:
@@ -222,17 +250,18 @@ def _print_step_result(result: StepResult) -> None:
 
     console.print()
     body = _clean_display_text(result.content)
-    console.print(Panel(body or "[no content]", title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
+    renderable = Text(body or "[no content]")
+    console.print(Panel(renderable, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
 
     if result.artifacts is not None:
         console.print(
             Panel(
-                format_artifact_summary(result.artifacts),
+                Text(format_artifact_summary(result.artifacts)),
                 title=f"{result.step_id} artifacts",
                 border_style="cyan",
                 box=box.SIMPLE,
             )
-    )
+        )
 
 
 def _clean_display_text(text: str) -> str:
@@ -268,8 +297,62 @@ def _clean_display_text(text: str) -> str:
     return cleaned
 
 
+def _set_stream_rendering_enabled(enabled: bool) -> None:
+    """Toggle live stream rendering for the current run."""
+
+    global _STREAM_RENDERING_ENABLED
+    _STREAM_RENDERING_ENABLED = enabled
+
+
+def _start_stream_render(step_id: str) -> None:
+    """Start a live rendered box for streaming output."""
+
+    global _ACTIVE_STREAM
+    _stop_stream_render()
+    state = _StreamRenderState(step_id=step_id)
+    state.live = Live(_stream_panel(state), console=console, refresh_per_second=12, transient=False)
+    state.live.__enter__()
+    _ACTIVE_STREAM = state
+
+
+def _append_stream_chunk(chunk: str) -> bool:
+    """Append a chunk to the active live stream, if any."""
+
+    if _ACTIVE_STREAM is None or _ACTIVE_STREAM.live is None:
+        return False
+
+    _ACTIVE_STREAM.content += chunk
+    _ACTIVE_STREAM.live.update(_stream_panel(_ACTIVE_STREAM))
+    return True
+
+
+def _stop_stream_render() -> None:
+    """Stop the active live stream, preserving its last rendered state."""
+
+    global _ACTIVE_STREAM
+    if _ACTIVE_STREAM is None or _ACTIVE_STREAM.live is None:
+        _ACTIVE_STREAM = None
+        return
+
+    _ACTIVE_STREAM.live.__exit__(None, None, None)
+    _ACTIVE_STREAM = None
+
+
+def _stream_panel(state: _StreamRenderState) -> Panel:
+    """Render the current streaming buffer as a boxed markdown panel."""
+
+    body = _clean_display_text(state.content)
+    renderable = Text(body) if body else Text("waiting for output...", style="dim")
+    return Panel(renderable, title=f"{state.step_id} streaming", border_style="green", box=box.SIMPLE)
+
+
 def _print_step_status(result: StepResult) -> None:
     """Print a compact completion line after a streamed step."""
+
+    if _ACTIVE_STREAM is not None and _ACTIVE_STREAM.step_id == result.step_id:
+        if result.content.strip():
+            _ACTIVE_STREAM.content = result.content
+        _stop_stream_render()
 
     usage = ""
     if result.usage is not None and (result.usage.total_tokens or result.usage.cost):
@@ -290,7 +373,7 @@ def _print_step_status(result: StepResult) -> None:
 def _print_step_prompt(planned: StepPrompt) -> None:
     """Print one planned prompt."""
 
-    console.print(Panel(planned.prompt, title=f"{planned.step_id} prompt", border_style="yellow", box=box.SIMPLE))
+    console.print(Panel(Text(planned.prompt), title=f"{planned.step_id} prompt", border_style="yellow", box=box.SIMPLE))
 
 
 def render_workflow_overview(config, previous_results: list[StepResult] | None = None) -> None:
