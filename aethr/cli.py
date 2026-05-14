@@ -25,6 +25,7 @@ from aethr.executor import (
     build_workflow_prompts,
     format_token_count,
     load_checkpoint,
+    workflow_cursor,
     run_workflow,
     serialize_checkpoint,
     summarize_results,
@@ -238,11 +239,12 @@ def _print_step_status(result: StepResult) -> None:
     backend = result.metadata.get("backend", "model")
     backend_text = f" backend={backend}" if backend != "model" else ""
     permissions_text = _permissions_suffix(result.metadata)
+    loop_status = _loop_suffix(result.metadata)
     console.print()
     console.print(
         f"[green]✓[/green] [bold]{result.step_id}[/bold] "
         f"[dim]role={result.metadata['role']} model={result.metadata['model']}{backend_text}"
-        f"{permissions_text}[/dim]{usage}"
+        f"{permissions_text}{loop_status}[/dim]{usage}"
     )
 
 
@@ -256,7 +258,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
     """Render a compact step overview before execution starts."""
 
     completed = {result.step_id for result in (previous_results or [])}
-    current_index = len(previous_results or [])
+    current_index = workflow_cursor(list(previous_results or []), config)
     table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold cyan", expand=True)
     table.add_column("#", style="dim", width=4)
     table.add_column("Step", style="bold")
@@ -265,6 +267,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
     table.add_column("Perms", width=8)
     table.add_column("Model")
     table.add_column("Ctx", justify="right", width=4)
+    table.add_column("Loop", width=18)
     table.add_column("State", width=10)
 
     for index, step in enumerate(config.steps):
@@ -279,6 +282,9 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
         permissions = ""
         if step.backend == "opencode":
             permissions = "unsafe" if step.unsafe_permissions else "safe"
+        loop = ""
+        if step.repeat is not None:
+            loop = f"{step.repeat.back_to}→{step.id} x{step.repeat.max_iterations}"
         model = config.models.get(step.role, "mock")
         table.add_row(
             str(index + 1),
@@ -288,6 +294,7 @@ def render_workflow_overview(config, previous_results: list[StepResult] | None =
             permissions,
             model,
             str(len(step.context)),
+            loop,
             state,
         )
 
@@ -301,6 +308,19 @@ def _permissions_suffix(metadata: dict[str, str]) -> str:
     if not permissions:
         return ""
     return f" permissions={permissions}"
+
+
+def _loop_suffix(metadata: dict[str, str]) -> str:
+    """Render loop outcome metadata for controller steps."""
+
+    status = metadata.get("loop_status")
+    if not status:
+        return ""
+    iterations = metadata.get("loop_iterations", "")
+    suffix = f" loop={status}"
+    if iterations:
+        suffix += f"x{iterations}"
+    return f" {suffix}"
 
 
 def _load_resume_results(resume_checkpoint: str | None, config) -> list[StepResult]:

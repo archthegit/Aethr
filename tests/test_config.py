@@ -134,3 +134,64 @@ steps:
     config = load_workflow_config(config_path)
 
     assert config.steps[0].backend == "opencode"
+
+
+def test_load_workflow_config_accepts_repeat_block(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path / ".aethr.yaml",
+        """
+workflow: loop-test
+roles:
+  implementer: Implement the work.
+  reviewer: Review the work.
+models:
+  implementer: openai:gpt-5.3-codex
+  reviewer: openai:gpt-4o-mini
+steps:
+  - id: implement
+    role: implementer
+    backend: opencode
+  - id: review
+    role: reviewer
+    repeat:
+      back_to: implement
+      until_contains: "Loop status: done"
+      max_iterations: 3
+""",
+    )
+
+    config = load_workflow_config(config_path)
+
+    repeat = config.steps[1].repeat
+    assert repeat is not None
+    assert repeat.back_to == "implement"
+    assert repeat.until_contains == "Loop status: done"
+    assert repeat.max_iterations == 3
+
+
+def test_load_workflow_config_rejects_repeat_from_future_step(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path / ".aethr.yaml",
+        """
+workflow: loop-test
+roles:
+  implementer: Implement the work.
+  reviewer: Review the work.
+models:
+  implementer: openai:gpt-5.3-codex
+  reviewer: openai:gpt-4o-mini
+steps:
+  - id: review
+    role: reviewer
+    repeat:
+      back_to: implement
+      until_contains: "Loop status: done"
+      max_iterations: 3
+  - id: implement
+    role: implementer
+    backend: opencode
+""",
+    )
+
+    with pytest.raises(ConfigError, match="must repeat from an earlier step"):
+        load_workflow_config(config_path)

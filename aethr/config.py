@@ -16,6 +16,16 @@ class ConfigError(Exception):
     """Raised when workflow configuration cannot be loaded."""
 
 
+class RepeatConfig(BaseModel):
+    """Explicit loop control attached to a workflow step."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    back_to: str = Field(min_length=1)
+    until_contains: str = Field(min_length=1)
+    max_iterations: int = Field(gt=0)
+
+
 class WorkflowStep(BaseModel):
     """One sequential step in an Aethr workflow."""
 
@@ -26,6 +36,7 @@ class WorkflowStep(BaseModel):
     backend: Literal["model", "opencode"] = "model"
     unsafe_permissions: bool = False
     context: list[str] = Field(default_factory=list)
+    repeat: RepeatConfig | None = None
 
 
 class WorkflowConfig(BaseModel):
@@ -43,6 +54,9 @@ class WorkflowConfig(BaseModel):
         """Ensure configured steps and model routes reference known roles."""
 
         known_roles = set(self.roles)
+        step_ids = [step.id for step in self.steps]
+        if len(step_ids) != len(set(step_ids)):
+            raise ValueError("workflow step ids must be unique")
         step_roles = {step.role for step in self.steps}
         missing_step_roles = sorted(step_roles - known_roles)
         if missing_step_roles:
@@ -53,6 +67,17 @@ class WorkflowConfig(BaseModel):
         if unknown_model_roles:
             joined = ", ".join(unknown_model_roles)
             raise ValueError(f"models reference undefined roles: {joined}")
+
+        for index, step in enumerate(self.steps):
+            if step.repeat is None:
+                continue
+            if step.repeat.back_to not in step_ids:
+                raise ValueError(f"step '{step.id}' repeats from unknown step '{step.repeat.back_to}'")
+            back_to_index = step_ids.index(step.repeat.back_to)
+            if back_to_index >= index:
+                raise ValueError(
+                    f"step '{step.id}' must repeat from an earlier step, got '{step.repeat.back_to}'"
+                )
 
         return self
 

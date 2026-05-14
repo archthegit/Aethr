@@ -128,6 +128,92 @@ def test_run_workflow_routes_opencode_backend(monkeypatch: pytest.MonkeyPatch) -
     assert results[0].metadata["backend"] == "opencode"
 
 
+def test_run_workflow_repeats_until_condition_met(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = WorkflowConfig(
+        workflow="plan-implement-review",
+        roles={
+            "planner": "Plan.",
+            "implementer": "Implement.",
+            "reviewer": "Review.",
+        },
+        models={
+            "planner": "openai:gpt-4o-mini",
+            "implementer": "openai:gpt-5.3-codex",
+            "reviewer": "openai:gpt-4o-mini",
+        },
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="implement", role="implementer", backend="opencode"),
+            WorkflowStep(
+                id="review",
+                role="reviewer",
+                repeat={
+                    "back_to": "implement",
+                    "until_contains": "Loop status: done",
+                    "max_iterations": 3,
+                },
+            ),
+        ],
+    )
+
+    implement_calls: list[str] = []
+    review_outputs = iter(
+        [
+            "review findings\nLoop status: continue",
+            "review findings resolved\nLoop status: done",
+        ]
+    )
+
+    def fake_model_complete(self, prompt, on_chunk=None):
+        if "Step:\nplan" in prompt:
+            return CompletionResult(
+                content="plan output",
+                usage=UsageSummary(prompt_tokens=1, completion_tokens=1, total_tokens=2, cost=0.0),
+            )
+        review_outputs_local = review_outputs
+        content = next(review_outputs_local)
+        return CompletionResult(
+            content=content,
+            usage=UsageSummary(prompt_tokens=1, completion_tokens=1, total_tokens=2, cost=0.0),
+        )
+
+    def fake_opencode_complete(self, prompt, on_chunk=None):
+        implement_calls.append(prompt)
+        return type(
+            "AgentCompletion",
+            (),
+            {
+                "content": "implemented change",
+                "usage": UsageSummary(),
+                "artifacts": StepArtifacts(
+                    changed_files=["src/app.py"],
+                    diff_stat=" src/app.py | 1 +",
+                    git_diff="diff --git a/src/app.py b/src/app.py\n+print('hi')\n",
+                ),
+            },
+        )()
+
+    monkeypatch.setattr("aethr.executor.ModelClient.complete", fake_model_complete)
+    monkeypatch.setattr("aethr.agents.OpenCodeAgentClient.complete", fake_opencode_complete)
+
+    results = run_workflow("do the thing", config)
+
+    assert [result.step_id for result in results] == [
+        "plan",
+        "implement",
+        "review",
+        "implement",
+        "review",
+    ]
+    assert len(implement_calls) == 2
+    assert results[-1].content.endswith("Loop status: done")
+
+    checkpoint = serialize_checkpoint(results)
+    restored = load_checkpoint(checkpoint)
+    resumed = run_workflow("do the thing", config, previous_results=restored)
+    assert [result.step_id for result in resumed] == [result.step_id for result in results]
+
+
 def test_run_workflow_preserves_agent_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
     config = WorkflowConfig(
         workflow="agentic",

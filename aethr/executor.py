@@ -60,13 +60,13 @@ def run_workflow(
     """Run a configured workflow as a simple in-memory sequence."""
 
     results = list(previous_results or [])
-    validate_checkpoint(results, config)
+    step_index = workflow_cursor(results, config)
 
-    start_index = len(results)
-    for position, step in enumerate(config.steps[start_index:], start=start_index + 1):
+    while step_index < len(config.steps):
+        step = config.steps[step_index]
         planned = build_step_prompt(task, step, config, results)
         if on_step_start is not None:
-            on_step_start(position, len(config.steps), planned)
+            on_step_start(step_index + 1, len(config.steps), planned)
 
         try:
             result = run_step(
@@ -84,6 +84,20 @@ def run_workflow(
         if on_step_result is not None:
             on_step_result(result)
 
+        if step.repeat is not None:
+            results = run_repeat_block(
+                task,
+                step_index,
+                step,
+                config,
+                results,
+                on_step_start=on_step_start,
+                on_step_chunk=on_step_chunk,
+                on_step_result=on_step_result,
+            )
+
+        step_index += 1
+
     return results
 
 
@@ -92,9 +106,9 @@ def build_workflow_prompts(task: str, config: WorkflowConfig, previous_results: 
 
     prompts: list[StepPrompt] = []
     history = list(previous_results or [])
-    validate_checkpoint(history, config)
+    step_index = workflow_cursor(history, config)
 
-    for step in config.steps[len(history) :]:
+    for step in config.steps[step_index:]:
         planned = build_step_prompt(task, step, config, history)
         prompts.append(planned)
         history.append(
@@ -144,12 +158,14 @@ def build_step_prompt(
     backend = step.backend
     previous_context = format_previous_results(previous_results)
     explicit_context = collect_context(step.context, latest_diff=latest_diff_from_results(previous_results))
+    loop_instruction = repeat_instruction(step)
     prompt = step_prompt(
         task=task,
         step=step,
         previous_context=previous_context,
         explicit_context=explicit_context,
         role_description=config.roles.get(step.role, ""),
+        loop_instruction=loop_instruction,
     )
     metadata = {
         "role": step.role,
@@ -160,6 +176,20 @@ def build_step_prompt(
     if step.backend == "opencode":
         metadata["permissions"] = "unsafe" if step.unsafe_permissions else "safe"
     return StepPrompt(step_id=step.id, prompt=prompt, metadata=metadata)
+
+
+def repeat_instruction(step: WorkflowStep) -> str:
+    """Render loop control instructions for a repeating step."""
+
+    if step.repeat is None:
+        return ""
+    return (
+        f"Repeat the workflow slice starting at `{step.repeat.back_to}` until this step contains "
+        f"`{step.repeat.until_contains}`. "
+        f"Stop after {step.repeat.max_iterations} total pass(es) through the repeated slice. "
+        "If the loop is complete, end with the exact line `Loop status: done`. "
+        "Otherwise end with the exact line `Loop status: continue`."
+    )
 
 
 def format_previous_results(results: list[StepResult]) -> str:
@@ -185,14 +215,138 @@ def latest_diff_from_results(results: list[StepResult]) -> str | None:
 def validate_checkpoint(results: list[StepResult], config: WorkflowConfig) -> None:
     """Ensure a resume checkpoint matches the configured workflow prefix."""
 
-    if len(results) > len(config.steps):
-        raise ValueError("resume checkpoint has more step results than the workflow defines")
+    workflow_cursor(results, config)
 
-    for result, step in zip(results, config.steps):
+
+def workflow_cursor(results: list[StepResult], config: WorkflowConfig) -> int:
+    """Validate completed results and return the next workflow step index."""
+
+    if not config.steps:
+        return 0
+
+    result_index = 0
+    step_index = 0
+    while result_index < len(results):
+        if step_index >= len(config.steps):
+            raise ValueError("resume checkpoint has more step results than the workflow defines")
+
+        step = config.steps[step_index]
+        result = results[result_index]
         if result.step_id != step.id:
             raise ValueError(
                 f"resume checkpoint does not match workflow order at '{step.id}'"
             )
+
+        result_index += 1
+        if step.repeat is None:
+            step_index += 1
+            continue
+
+        loop_status = result.metadata.get("loop_status")
+        if loop_status in {"satisfied", "exhausted"}:
+            step_index += 1
+            continue
+        if repeat_condition_met(result, step.repeat):
+            step_index += 1
+        else:
+            step_index = step_index_of(config, step.repeat.back_to)
+
+    return step_index
+
+
+def run_repeat_block(
+    task: str,
+    controller_index: int,
+    controller_step: WorkflowStep,
+    config: WorkflowConfig,
+    results: list[StepResult],
+    on_step_start: StepStartCallback | None = None,
+    on_step_chunk: StepChunkCallback | None = None,
+    on_step_result: StepCallback | None = None,
+) -> list[StepResult]:
+    """Repeat a contiguous workflow slice until the controller condition is met."""
+
+    repeat = controller_step.repeat
+    if repeat is None:
+        return results
+
+    start_index = step_index_of(config, repeat.back_to)
+    if start_index >= controller_index:
+        raise ValueError(
+            f"step '{controller_step.id}' repeats from '{repeat.back_to}', which must be earlier"
+        )
+
+    iterations = 1
+    while not repeat_condition_met(results[-1], repeat):
+        if iterations >= repeat.max_iterations:
+            break
+
+        for replay_index in range(start_index, controller_index + 1):
+            replay_step = config.steps[replay_index]
+            planned = build_step_prompt(task, replay_step, config, results)
+            if on_step_start is not None:
+                on_step_start(replay_index + 1, len(config.steps), planned)
+
+            try:
+                replay_result = run_step(
+                    task,
+                    replay_step,
+                    config,
+                    results,
+                    planned=planned,
+                    on_chunk=on_step_chunk,
+                )
+            except LLMError as exc:
+                raise WorkflowStepError(replay_step.id, results, exc) from exc
+
+            results.append(replay_result)
+            if on_step_result is not None:
+                on_step_result(replay_result)
+
+        iterations += 1
+
+    loop_status = "satisfied" if repeat_condition_met(results[-1], repeat) else "exhausted"
+    results[-1] = annotate_loop_result(results[-1], repeat, iterations, loop_status)
+    return results
+
+
+def repeat_condition_met(result: StepResult, repeat: object) -> bool:
+    """Check whether a controller step has satisfied its repeat condition."""
+
+    until_contains = getattr(repeat, "until_contains", "")
+    return until_contains in result.content
+
+
+def annotate_loop_result(
+    result: StepResult,
+    repeat: object,
+    iterations: int,
+    loop_status: str,
+) -> StepResult:
+    """Attach loop outcome metadata to the controller result."""
+
+    metadata = dict(result.metadata)
+    metadata["loop_status"] = loop_status
+    metadata["loop_iterations"] = str(iterations)
+    metadata["loop_back_to"] = getattr(repeat, "back_to", "")
+    metadata["loop_until"] = getattr(repeat, "until_contains", "")
+    metadata["loop_max_iterations"] = str(getattr(repeat, "max_iterations", 0))
+    return StepResult(
+        step_id=result.step_id,
+        content=result.content,
+        metadata=metadata,
+        artifacts=result.artifacts,
+        usage=result.usage,
+    )
+
+
+def step_index_of(config: WorkflowConfig, step_id: str) -> int:
+    """Return the index of a configured step."""
+
+    for index, step in enumerate(config.steps):
+        if step.id == step_id:
+            return index
+    raise ValueError(f"unknown step referenced in loop: {step_id}")
 
 
 def serialize_checkpoint(results: list[StepResult]) -> str:

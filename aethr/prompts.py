@@ -40,14 +40,16 @@ def step_prompt(
     previous_context: str,
     explicit_context: str,
     role_description: str = "",
+    loop_instruction: str = "",
 ) -> str:
     """Build a prompt for one configured workflow step."""
 
     role_instruction = ROLE_INSTRUCTIONS.get(step.role, ROLE_INSTRUCTIONS["worker"])
     role_context = f"\nWorkflow role guidance:\n{role_description}\n" if role_description else ""
+    loop_context = f"\nLoop control:\n{loop_instruction}\n" if loop_instruction else ""
     return f"""You are the {step.role} step in an Aethr coding workflow.
 {role_context}
-Role-specific instructions:
+{loop_context}Role-specific instructions:
 {role_instruction}
 
 Task:

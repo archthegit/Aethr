@@ -166,6 +166,31 @@ steps:
 Missing files, empty diffs, non-git directories, and unreadable files appear as
 clear placeholder notes in the prompt.
 
+## Loops
+
+A step can repeat an earlier contiguous slice of the workflow until a condition
+is met. This stays explicit in YAML and keeps the workflow sequential.
+
+Example:
+
+```yaml
+steps:
+  - id: implement
+    role: implementer
+    backend: opencode
+
+  - id: review
+    role: reviewer
+    repeat:
+      back_to: implement
+      until_contains: "Loop status: done"
+      max_iterations: 3
+```
+
+Use this for bounded review/fix cycles. The controller step should emit
+`Loop status: done` when the loop should stop and `Loop status: continue` when
+another pass is needed.
+
 ## Prompt Previewing
 
 Use `--show-prompt` to see exactly what Aethr would send to each model:

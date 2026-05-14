@@ -20,5 +20,9 @@ steps:
 
   - id: review
     role: reviewer
+    repeat:
+      back_to: implement
+      until_contains: "Loop status: done"
+      max_iterations: 3
     context:
       - latest_diff
