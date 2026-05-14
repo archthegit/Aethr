@@ -5,13 +5,13 @@ from __future__ import annotations
 import re
 import shlex
 import tempfile
+import textwrap
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich import box
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -221,11 +221,8 @@ def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
     console.print()
-    if result.content.strip():
-        body = Markdown(result.content.rstrip())
-    else:
-        body = "[no content]"
-    console.print(Panel(body, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
+    body = _clean_display_text(result.content)
+    console.print(Panel(body or "[no content]", title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
 
     if result.artifacts is not None:
         console.print(
@@ -235,7 +232,40 @@ def _print_step_result(result: StepResult) -> None:
                 border_style="cyan",
                 box=box.SIMPLE,
             )
-        )
+    )
+
+
+def _clean_display_text(text: str) -> str:
+    """Remove common markdown markers before rendering terminal output."""
+
+    cleaned_lines: list[str] = []
+    in_code_block = False
+
+    for raw_line in textwrap.dedent(text).strip().splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+
+        if in_code_block:
+            cleaned_lines.append(line)
+            continue
+
+        heading = re.match(r"^\s{0,3}#{1,6}\s+(.*)$", line)
+        if heading is not None:
+            cleaned_lines.append(heading.group(1).strip())
+            continue
+
+        line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"(?<!\w)\*(.+?)\*(?!\w)", r"\1", line)
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned
 
 
 def _print_step_status(result: StepResult) -> None:
