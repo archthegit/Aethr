@@ -1,5 +1,16 @@
+import pytest
+
 from aethr.config import WorkflowConfig, WorkflowStep
-from aethr.executor import build_workflow_prompts, run_workflow
+from aethr.executor import (
+    StepResult,
+    WorkflowStepError,
+    build_workflow_prompts,
+    load_checkpoint,
+    run_workflow,
+    serialize_checkpoint,
+    summarize_results,
+)
+from aethr.llm import CompletionResult, LLMError, UsageSummary
 
 
 def test_run_workflow_returns_mock_step_results() -> None:
@@ -36,6 +47,50 @@ def test_run_workflow_runs_each_configured_step_once() -> None:
     assert [result.step_id for result in results] == ["plan", "review"]
 
 
+def test_run_workflow_supports_resume_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = WorkflowConfig(
+        workflow="resume",
+        roles={"planner": "Plan.", "reviewer": "Review."},
+        models={"planner": "openai:gpt-5.5", "reviewer": "openai:gpt-5.5"},
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="review", role="reviewer"),
+        ],
+    )
+    previous_results = [
+        StepResult(
+            step_id="plan",
+            content="seed plan",
+            usage=UsageSummary(prompt_tokens=10, completion_tokens=5, total_tokens=15, cost=0.01),
+        )
+    ]
+    streamed_chunks: list[str] = []
+
+    def fake_complete(self, prompt, on_chunk=None):
+        if on_chunk is not None:
+            on_chunk("chunk one")
+            on_chunk("chunk two")
+        return CompletionResult(
+            content="reviewed output",
+            usage=UsageSummary(prompt_tokens=20, completion_tokens=10, total_tokens=30, cost=0.02),
+        )
+
+    monkeypatch.setattr("aethr.executor.ModelClient.complete", fake_complete)
+
+    results = run_workflow(
+        "do the thing",
+        config,
+        previous_results=previous_results,
+        on_step_chunk=lambda _step_id, chunk: streamed_chunks.append(chunk),
+    )
+
+    assert [result.step_id for result in results] == ["plan", "review"]
+    assert results[0].content == "seed plan"
+    assert results[1].content == "reviewed output"
+    assert streamed_chunks == ["chunk one", "chunk two"]
+    assert summarize_results(results) == "2 steps, 45 tokens, $0.03"
+
+
 def test_build_workflow_prompts_does_not_call_models() -> None:
     config = WorkflowConfig(
         workflow="preview",
@@ -52,5 +107,39 @@ def test_build_workflow_prompts_does_not_call_models() -> None:
     assert [prompt.step_id for prompt in prompts] == ["plan", "review"]
     assert prompts[0].metadata["model"] == "openai:gpt-5.5"
     assert prompts[1].metadata["context_sources"] == "1"
-    assert "[output from plan]" in prompts[1].prompt
+    assert "[simulated previous output from plan]" in prompts[1].prompt
     assert "[missing file:" in prompts[1].prompt
+
+
+def test_run_workflow_emits_checkpoint_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = WorkflowConfig(
+        workflow="fail-fast",
+        roles={"planner": "Plan.", "reviewer": "Review."},
+        models={"planner": "openai:gpt-5.5", "reviewer": "openai:gpt-5.5"},
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="review", role="reviewer"),
+        ],
+    )
+
+    calls = {"count": 0}
+
+    def fake_complete(self, prompt, on_chunk=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return CompletionResult(
+                content="plan output",
+                usage=UsageSummary(prompt_tokens=10, completion_tokens=4, total_tokens=14, cost=0.01),
+            )
+        raise LLMError("boom")
+
+    monkeypatch.setattr("aethr.executor.ModelClient.complete", fake_complete)
+
+    with pytest.raises(WorkflowStepError) as excinfo:
+        run_workflow("do the thing", config)
+
+    assert excinfo.value.step_id == "review"
+    assert [result.step_id for result in excinfo.value.completed_results] == ["plan"]
+    checkpoint = serialize_checkpoint(excinfo.value.completed_results)
+    restored = load_checkpoint(checkpoint)
+    assert restored[0].step_id == "plan"

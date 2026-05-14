@@ -52,7 +52,8 @@ file.
 - **Model routing**: each role can point at a different LiteLLM model.
 
 Each step receives the task, prior step outputs, and its declared context. The
-step result stays in memory and is printed to the terminal.
+step result stays in memory, streams to the terminal as it is generated, and
+is printed in a Rich panel when complete.
 
 ## Example Workflow Config
 
@@ -143,6 +144,9 @@ clear placeholder where real previous step output would appear.
 
 Aethr works without API keys by returning deterministic mock responses.
 
+Aethr also loads a project-level `.env` automatically before model calls, so
+credentials can live alongside the workflow file without extra flags.
+
 Use the models configured in `.aethr.yaml`:
 
 ```bash
@@ -173,6 +177,17 @@ It should not feel like:
 Aethr intentionally avoids persistence, replay systems, caches, plugins, DAGs,
 async runtimes, vector search, automatic retrieval, memory systems, and agent
 abstractions.
+
+If a workflow fails, Aethr prints a copyable JSON checkpoint for the completed
+steps. Pass that back with `--resume-checkpoint` to continue from the next
+step without rerunning the earlier ones.
+
+## Future Work
+
+One likely future UX is workflow promotion: take a one-off run that worked and
+turn it into an editable `.aethr.yaml` workflow. The idea is to help users go
+from ad hoc sessions to repeatable workflows without introducing session
+storage, replay systems, or hidden history.
 
 ## Architecture
 

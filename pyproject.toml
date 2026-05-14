@@ -27,6 +27,7 @@ classifiers = [
 dependencies = [
   "litellm>=1.60.0",
   "pydantic>=2.10.0",
+  "python-dotenv>=1.0.1",
   "pyyaml>=6.0.2",
   "rich>=13.9.0",
   "typer>=0.15.0",
