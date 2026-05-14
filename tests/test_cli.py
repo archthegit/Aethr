@@ -12,7 +12,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.4" in result.output
+    assert "Aethr 0.1.5" in result.output
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:
@@ -120,6 +120,7 @@ def test_run_streams_chunks_and_prints_compact_status(monkeypatch) -> None:
     result = runner.invoke(app, ["run", "review my changes"])
 
     assert result.exit_code == 0
+    assert "Workflow map" in result.output
     assert "live chunk" in result.output
     assert "✓" in result.output
     assert "full content" not in result.output

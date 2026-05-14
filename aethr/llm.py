@@ -39,6 +39,18 @@ class CompletionResult:
     usage: UsageSummary
 
 
+def normalize_model_name(model: str | None) -> str | None:
+    """Convert Relay's provider:model form into provider/model for backends."""
+
+    if model is None:
+        return None
+    if ":" in model and "/" not in model:
+        provider, name = model.split(":", 1)
+        if provider and name:
+            return f"{provider}/{name}"
+    return model
+
+
 class ModelClient:
     """Minimal model client used by workflow steps."""
 
@@ -47,7 +59,7 @@ class ModelClient:
         if dotenv_path:
             load_dotenv(dotenv_path, override=False)
         self.requested_model = os.getenv("AETHR_MODEL") or model
-        self.model = self._normalize_model_name(self.requested_model)
+        self.model = normalize_model_name(self.requested_model)
         self.live = os.getenv("AETHR_LIVE") == "1" or os.getenv("AETHR_MODEL") is not None
 
     def complete(self, prompt: str, on_chunk: ChunkCallback | None = None) -> CompletionResult:
@@ -95,17 +107,6 @@ class ModelClient:
         from litellm import completion
 
         return completion(**kwargs)
-
-    def _normalize_model_name(self, model: str | None) -> str | None:
-        """Convert Relay's provider:model form into LiteLLM's provider/model form."""
-
-        if model is None:
-            return None
-        if ":" in model and "/" not in model:
-            provider, name = model.split(":", 1)
-            if provider and name:
-                return f"{provider}/{name}"
-        return model
 
     def _mock_complete(self, prompt: str) -> str:
         """Return a deterministic placeholder completion."""

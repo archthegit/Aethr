@@ -49,7 +49,9 @@ aethr run "add support for loading .env files"
 ```
 
 Aethr copies a YAML preset into `.aethr.yaml`. Edit it like any other project
-file.
+file. The default `plan-implement-review` preset uses OpenCode for the
+implementation step, so install the `opencode` CLI if you want that step to
+edit the working tree.
 
 ## How Aethr Works
 
@@ -82,9 +84,21 @@ steps:
       - git_diff
 ```
 
+For real code changes, Aethr can hand an implementation step to OpenCode:
+
+```yaml
+  - id: implement
+    role: implementer
+    backend: opencode
+```
+
+That keeps the workflow explicit while letting a real coding agent edit the
+working tree.
+
 ## Built-In Workflows
 
-- `plan-implement-review`: plan a task, propose an implementation, review it.
+- `plan-implement-review`: plan a task, then hand implementation to OpenCode
+  before review.
 - `review-existing-diff`: review the current working tree diff.
 - `debug-failing-test`: diagnose a failing test, propose a fix, review it.
 - `add-tests`: plan, draft, and review focused test coverage.

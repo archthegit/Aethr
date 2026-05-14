@@ -91,6 +91,37 @@ def test_run_workflow_supports_resume_checkpoints(monkeypatch: pytest.MonkeyPatc
     assert summarize_results(results) == "2 steps, 45 tokens, $0.03"
 
 
+def test_run_workflow_routes_opencode_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = WorkflowConfig(
+        workflow="agentic",
+        roles={"implementer": "Implement."},
+        models={"implementer": "openai:gpt-5.3-codex"},
+        steps=[WorkflowStep(id="implement", role="implementer", backend="opencode")],
+    )
+    streamed_chunks: list[str] = []
+
+    def fake_complete(self, prompt, on_chunk=None):
+        if on_chunk is not None:
+            on_chunk("open code chunk")
+        return CompletionResult(
+            content="agent changed files",
+            usage=UsageSummary(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0),
+        )
+
+    monkeypatch.setattr("aethr.agents.OpenCodeAgentClient.complete", fake_complete)
+
+    results = run_workflow(
+        "do the thing",
+        config,
+        on_step_chunk=lambda _step_id, chunk: streamed_chunks.append(chunk),
+    )
+
+    assert [result.step_id for result in results] == ["implement"]
+    assert results[0].content == "agent changed files"
+    assert streamed_chunks == ["open code chunk"]
+    assert results[0].metadata["backend"] == "opencode"
+
+
 def test_build_workflow_prompts_does_not_call_models() -> None:
     config = WorkflowConfig(
         workflow="preview",

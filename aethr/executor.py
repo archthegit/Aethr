@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from aethr.config import WorkflowConfig, WorkflowStep
+from aethr.agents import OpenCodeAgentClient
 from aethr.context import collect_context
 from aethr.llm import LLMError, ModelClient, UsageSummary
 from aethr.prompts import step_prompt
@@ -116,11 +117,13 @@ def run_step(
 
     if planned is None:
         planned = build_step_prompt(task, step, config, previous_results)
-    model = ModelClient(config.models.get(step.role))
-    completion = model.complete(
-        planned.prompt,
-        on_chunk=(lambda chunk: on_chunk(step.id, chunk)) if on_chunk is not None else None,
-    )
+    chunk_callback = (lambda chunk: on_chunk(step.id, chunk)) if on_chunk is not None else None
+    if step.backend == "opencode":
+        agent = OpenCodeAgentClient(config.models.get(step.role))
+        completion = agent.complete(planned.prompt, on_chunk=chunk_callback)
+    else:
+        model = ModelClient(config.models.get(step.role))
+        completion = model.complete(planned.prompt, on_chunk=chunk_callback)
     return StepResult(step_id=step.id, content=completion.content, metadata=planned.metadata, usage=completion.usage)
 
 
@@ -133,6 +136,7 @@ def build_step_prompt(
     """Build one step prompt and metadata."""
 
     model = ModelClient(config.models.get(step.role))
+    backend = step.backend
     previous_context = format_previous_results(previous_results)
     explicit_context = collect_context(step.context)
     prompt = step_prompt(
@@ -145,6 +149,7 @@ def build_step_prompt(
     metadata = {
         "role": step.role,
         "model": model.requested_model or "mock",
+        "backend": backend,
         "context_sources": str(len(step.context)),
     }
     return StepPrompt(step_id=step.id, prompt=prompt, metadata=metadata)

@@ -16,6 +16,7 @@ steps:
 
   - id: implement
     role: implementer
+    backend: opencode
 
   - id: review
     role: reviewer

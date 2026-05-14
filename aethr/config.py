@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -22,6 +23,7 @@ class WorkflowStep(BaseModel):
 
     id: str = Field(min_length=1)
     role: str = Field(min_length=1)
+    backend: Literal["model", "opencode"] = "model"
     context: list[str] = Field(default_factory=list)
 
 

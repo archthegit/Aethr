@@ -10,7 +10,9 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich import box
 from rich.panel import Panel
+from rich.table import Table
 
 from aethr import __version__
 from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
@@ -104,6 +106,7 @@ def run(
     previous_results = _load_resume_results(resume_checkpoint, config)
     if previous_results:
         console.print(f"[dim]Resuming from {len(previous_results)} completed step(s).[/dim]")
+    render_workflow_overview(config, previous_results=previous_results)
 
     if show_prompt:
         console.print("[bold]Mode[/bold] prompt preview")
@@ -145,14 +148,18 @@ def version() -> None:
 def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:
     """Print a compact header before a step begins."""
 
-    console.print()
-    console.print(
-        f"[bold cyan]{index}/{total}[/bold cyan] "
-        f"[bold]{planned.step_id}[/bold] "
-        f"[dim]role={planned.metadata['role']} "
-        f"model={planned.metadata['model']} "
-        f"context={planned.metadata['context_sources']}[/dim]"
+    backend = planned.metadata.get("backend", "model")
+    backend_text = f" backend={backend}" if backend != "model" else ""
+    details = Table.grid(expand=True, padding=(0, 1))
+    details.add_column(ratio=1)
+    details.add_column(ratio=2)
+    details.add_row(
+        f"[bold cyan]{index}/{total}[/bold cyan] [bold]{planned.step_id}[/bold]",
+        f"[dim]role={planned.metadata['role']} model={planned.metadata['model']}{backend_text} "
+        f"context={planned.metadata['context_sources']}[/dim]",
     )
+    console.print()
+    console.print(Panel(details, border_style="cyan", box=box.SIMPLE))
 
 
 def _print_step_chunk(_step_id: str, chunk: str) -> None:
@@ -165,27 +172,66 @@ def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
     console.print()
-    console.print(Panel(result.content, title=result.step_id, border_style="green"))
+    console.print(Panel(result.content, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
 
 
 def _print_step_status(result: StepResult) -> None:
     """Print a compact completion line after a streamed step."""
 
     usage = ""
-    if result.usage is not None:
+    if result.usage is not None and (result.usage.total_tokens or result.usage.cost):
         usage = f" [dim]{format_token_count(result.usage.total_tokens)} ${result.usage.cost:.2f}[/dim]"
 
+    backend = result.metadata.get("backend", "model")
+    backend_text = f" backend={backend}" if backend != "model" else ""
     console.print()
     console.print(
         f"[green]✓[/green] [bold]{result.step_id}[/bold] "
-        f"[dim]role={result.metadata['role']} model={result.metadata['model']}[/dim]{usage}"
+        f"[dim]role={result.metadata['role']} model={result.metadata['model']}{backend_text}[/dim]{usage}"
     )
 
 
 def _print_step_prompt(planned: StepPrompt) -> None:
     """Print one planned prompt."""
 
-    console.print(Panel(planned.prompt, border_style="yellow"))
+    console.print(Panel(planned.prompt, title=f"{planned.step_id} prompt", border_style="yellow", box=box.SIMPLE))
+
+
+def render_workflow_overview(config, previous_results: list[StepResult] | None = None) -> None:
+    """Render a compact step overview before execution starts."""
+
+    completed = {result.step_id for result in (previous_results or [])}
+    current_index = len(previous_results or [])
+    table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold cyan", expand=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Step", style="bold")
+    table.add_column("Role")
+    table.add_column("Backend")
+    table.add_column("Model")
+    table.add_column("Ctx", justify="right", width=4)
+    table.add_column("State", width=10)
+
+    for index, step in enumerate(config.steps):
+        if step.id in completed:
+            state = "[green]done[/green]"
+        elif index == current_index:
+            state = "[yellow]current[/yellow]"
+        else:
+            state = "[dim]pending[/dim]"
+
+        backend = step.backend if step.backend != "model" else "model"
+        model = config.models.get(step.role, "mock")
+        table.add_row(
+            str(index + 1),
+            step.id,
+            step.role,
+            backend,
+            model,
+            str(len(step.context)),
+            state,
+        )
+
+    console.print(Panel(table, title="Workflow map", border_style="blue", box=box.ROUNDED))
 
 
 def _load_resume_results(resume_checkpoint: str | None, config) -> list[StepResult]:
