@@ -14,6 +14,7 @@ from rich.text import Text
 from aethr.artifacts import format_artifact_summary
 from aethr.config import WorkflowConfig
 from aethr.executor import (
+    StepPrompt,
     StepResult,
     workflow_cursor,
 )
@@ -112,6 +113,15 @@ def print_step_start(index: int, total: int, planned: StepPrompt) -> None:
     console.print(Panel(details, border_style="cyan", box=box.SIMPLE))
     if _STREAM_RENDERING_ENABLED:
         start_stream_render(planned.step_id)
+
+
+def print_step_prompt(planned: StepPrompt) -> None:
+    """Print the exact prompt for the current step."""
+
+    body = clean_display_text(planned.prompt)
+    renderable = Text(body or "[no prompt]")
+    console.print()
+    console.print(Panel(renderable, title=f"{planned.step_id} prompt", border_style="white", box=box.SIMPLE))
 
 
 def print_step_chunk(_step_id: str, chunk: str) -> None:

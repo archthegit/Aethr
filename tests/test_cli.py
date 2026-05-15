@@ -16,7 +16,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.14" in result.output
+    assert "Aethr 0.1.15" in result.output
 
 
 def test_cli_callback_loads_project_dotenv(tmp_path, monkeypatch) -> None:
@@ -426,22 +426,54 @@ def test_run_streams_bracketed_chunks_without_markup(monkeypatch) -> None:
     assert "<tag>plain text</tag>" in result.output
 
 
-def test_tui_command_invokes_runner(monkeypatch) -> None:
+def test_run_without_task_opens_editor_and_bootstraps_repl(monkeypatch) -> None:
     runner = CliRunner()
     config = WorkflowConfig(
-        workflow="tui",
+        workflow="editor",
+        roles={"reviewer": "Review."},
+        models={"reviewer": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="review", role="reviewer")],
+    )
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr("aethr.cli._collect_task_from_editor", lambda: "review my current changes")
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+
+    def fake_run_repl_workflow(task, workflow_config, previous_results=None, stream=True, bootstrap_first_step=False):
+        called["task"] = task
+        called["previous_results"] = previous_results
+        called["stream"] = stream
+        called["bootstrap_first_step"] = bootstrap_first_step
+        return []
+
+    monkeypatch.setattr("aethr.cli.run_repl_workflow", fake_run_repl_workflow)
+
+    result = runner.invoke(app, ["run"])
+
+    assert result.exit_code == 0
+    assert called["task"] == "review my current changes"
+    assert called["previous_results"] == []
+    assert called["stream"] is True
+    assert called["bootstrap_first_step"] is True
+    assert "Workflow complete" in result.output
+
+
+def test_run_show_prompt_prints_step_prompts(monkeypatch) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="prompt",
         roles={"reviewer": "Review."},
         models={"reviewer": "openai:gpt-4o-mini"},
         steps=[WorkflowStep(id="review", role="reviewer")],
     )
 
     monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
-    monkeypatch.setattr("aethr.cli.run_tui_workflow", lambda *args, **kwargs: [])
 
-    result = runner.invoke(app, ["tui", "review my changes"])
+    result = runner.invoke(app, ["run", "review my changes", "--show-prompt"])
 
     assert result.exit_code == 0
-    assert "Workflow complete" in result.output
+    assert "review prompt" in result.output.lower()
+    assert "Prompt preview complete" in result.output
 
 
 def test_run_streams_markdown_chunks_without_literal_markup(monkeypatch) -> None:

@@ -41,6 +41,13 @@ aethr init review-existing-diff
 aethr run "review my current changes before I commit"
 ```
 
+If you omit the task entirely, `aethr run` opens your editor first and then
+drops into the interactive session after the first step:
+
+```bash
+aethr run
+```
+
 For a multi-model implementation workflow:
 
 ```bash

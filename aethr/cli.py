@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import shlex
 import tempfile
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -29,7 +32,7 @@ from aethr.executor import (
 )
 from aethr.llm import LLMError
 from aethr import session as terminal_session
-from aethr.tui import run_tui_workflow
+from aethr.repl import run_repl_workflow
 from aethr.workflow import WorkflowTemplateError, available_workflows, init_workflow
 
 
@@ -78,7 +81,7 @@ def init(
 
 @app.command()
 def run(
-    task: Annotated[str, typer.Argument(help="Coding task to run through the pipeline.")],
+    task: Annotated[str | None, typer.Argument(help="Coding task to run through the pipeline.")] = None,
     show_prompt: Annotated[
         bool,
         typer.Option("--show-prompt", help="Print exact step prompts without calling models."),
@@ -101,14 +104,33 @@ def run(
 ) -> None:
     """Run the configured sequential workflow."""
 
-    console.print(Panel.fit(task, title="Aethr Task", border_style="cyan"))
+    editor_task = task is None
     try:
         config = load_workflow_config()
     except ConfigError as exc:
         raise typer.BadParameter(f"{exc}. Run 'aethr init' to create {CONFIG_FILE}.") from exc
 
-    console.print(f"[bold]Workflow[/bold] {config.workflow}")
     previous_results = _load_resume_results(resume_checkpoint, config)
+
+    if task is None:
+        task = _collect_task_from_editor()
+    console.print(Panel.fit(task, title="Aethr Task", border_style="cyan"))
+
+    if editor_task:
+        if show_prompt:
+            console.print("[dim]Ignoring --show-prompt for editor-driven runs.[/dim]")
+        results = _run_terminal_workflow(
+            task,
+            config,
+            previous_results=previous_results,
+            stream=stream,
+            verbose=verbose,
+            bootstrap_first_step=not previous_results,
+        )
+        console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
+        return
+
+    console.print(f"[bold]Workflow[/bold] {config.workflow}")
     if previous_results:
         console.print(f"[dim]Resuming from {len(previous_results)} completed step(s).[/dim]")
     terminal_session.render_workflow_overview(config, previous_results=previous_results)
@@ -144,43 +166,6 @@ def run(
         raise typer.Exit(code=1) from exc
     finally:
         terminal_session.set_stream_rendering_enabled(False)
-
-    console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
-
-
-@app.command()
-def tui(
-    task: Annotated[str, typer.Argument(help="Coding task to run through the TUI.")],
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Print the full checkpoint JSON on failure."),
-    ] = False,
-    resume_checkpoint: Annotated[
-        str | None,
-        typer.Option(
-            "--resume-checkpoint",
-            help="JSON array or @file with previously completed step results.",
-        ),
-    ] = None,
-) -> None:
-    """Run the configured workflow inside a full-screen terminal UI."""
-
-    try:
-        config = load_workflow_config()
-    except ConfigError as exc:
-        raise typer.BadParameter(f"{exc}. Run 'aethr init' to create {CONFIG_FILE}.") from exc
-
-    previous_results = _load_resume_results(resume_checkpoint, config)
-
-    try:
-        results = run_tui_workflow(task, config, previous_results=previous_results)
-    except LLMError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    except RuntimeError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    except WorkflowStepError as exc:
-        _print_workflow_failure(task, exc, verbose=verbose)
-        raise typer.Exit(code=1) from exc
 
     console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
 
@@ -241,6 +226,75 @@ def _permissions_suffix(metadata: dict[str, str]) -> str:
     if not permissions:
         return ""
     return f" permissions={permissions}"
+
+
+def _collect_task_from_editor() -> str:
+    """Open a local editor so the user can type the task."""
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise typer.BadParameter("aethr run without a task requires an interactive terminal")
+
+    template = "# Write the task for Aethr below.\n# Save and close the editor when finished.\n"
+    with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8", suffix=".aethr-task", delete=False) as handle:
+        handle.write(template)
+        handle.flush()
+        editor_path = Path(handle.name)
+
+    editor = os.getenv("AETHR_EDITOR") or os.getenv("VISUAL") or os.getenv("EDITOR") or "vi"
+    try:
+        subprocess.run(shlex.split(editor) + [str(editor_path)], check=True)
+        task = editor_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise typer.BadParameter(f"Unable to open editor '{editor}': {exc}") from exc
+    finally:
+        try:
+            editor_path.unlink()
+        except OSError:
+            pass
+
+    task = _strip_task_editor_comments(task).strip()
+    if not task:
+        raise typer.BadParameter("Task cannot be empty")
+    return task
+
+
+def _run_terminal_workflow(
+    task: str,
+    config,
+    *,
+    previous_results: list[StepResult],
+    stream: bool,
+    verbose: bool,
+    bootstrap_first_step: bool,
+) -> list[StepResult]:
+    """Run an interactive REPL workflow and handle terminal errors consistently."""
+
+    try:
+        return run_repl_workflow(
+            task,
+            config,
+            previous_results=previous_results,
+            stream=stream,
+            bootstrap_first_step=bootstrap_first_step,
+        )
+    except LLMError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except WorkflowStepError as exc:
+        _print_workflow_failure(task, exc, verbose=verbose)
+        raise typer.Exit(code=1) from exc
+
+
+def _strip_task_editor_comments(text: str) -> str:
+    """Remove editor template comments from a task buffer."""
+
+    lines = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _load_resume_results(resume_checkpoint: str | None, config) -> list[StepResult]:
