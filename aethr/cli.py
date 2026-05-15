@@ -16,6 +16,7 @@ from rich.panel import Panel
 from aethr import __version__
 from aethr.auth import env_var_for, login as auth_login, status as auth_status
 from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
+from aethr.env import load_project_dotenv
 from aethr.executor import (
     StepResult,
     WorkflowStepError,
@@ -41,6 +42,8 @@ app.add_typer(auth_app, name="auth")
 @app.callback()
 def main() -> None:
     """Aethr command group."""
+
+    load_project_dotenv()
 
 
 @app.command()

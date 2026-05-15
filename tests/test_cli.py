@@ -1,3 +1,4 @@
+import os
 import shlex
 
 import pytest
@@ -15,7 +16,19 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.12" in result.output
+    assert "Aethr 0.1.13" in result.output
+
+
+def test_cli_callback_loads_project_dotenv(tmp_path, monkeypatch) -> None:
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AETHR_MODEL", raising=False)
+    (tmp_path / ".env").write_text("AETHR_MODEL=openai:gpt-4o-mini\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["version"])
+
+    assert result.exit_code == 0
+    assert os.getenv("AETHR_MODEL") == "openai:gpt-4o-mini"
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:

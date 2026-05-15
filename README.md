@@ -223,6 +223,12 @@ Aethr works without API keys by returning deterministic mock responses.
 Aethr also loads a project-level `.env` automatically before model calls, so
 credentials can live alongside the workflow file without extra flags.
 
+You can start from the included template:
+
+```bash
+cp .env.example .env
+```
+
 Use the models configured in `.aethr.yaml`:
 
 ```bash

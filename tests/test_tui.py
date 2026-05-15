@@ -1,6 +1,14 @@
 from aethr.config import RepeatConfig, WorkflowConfig, WorkflowStep
 from aethr.executor import StepPrompt, StepResult
-from aethr.tui import build_step_detail_lines, build_workflow_map_lines
+from aethr.tui import (
+    ChatMessage,
+    TuiState,
+    build_chat_lines,
+    build_step_detail_lines,
+    build_stream_lines,
+    build_workflow_map_lines,
+    compose_task_with_chat,
+)
 
 
 def test_workflow_map_lines_show_loop_and_state() -> None:
@@ -52,4 +60,82 @@ def test_step_detail_lines_clean_prompt_markdown() -> None:
     assert "Findings" in rendered
     assert "High Severity" in rendered
     assert "**" not in rendered
-    assert "Live output:" in rendered
+
+
+def test_step_detail_lines_default_to_prompt_summary() -> None:
+    planned = StepPrompt(
+        step_id="review",
+        prompt="### Findings\n\n1. **High Severity**: Fix it.\n2. **Low Severity**: Add a test.\n\nMore details.",
+        metadata={"role": "reviewer", "model": "openai:gpt-4o-mini", "context_sources": "1"},
+    )
+
+    lines = build_step_detail_lines(planned, "", False, 60)
+    rendered = "\n".join(lines)
+
+    assert "Prompt summary:" in rendered
+    assert "Findings" in rendered
+    assert "More details" not in rendered
+    assert "…" in rendered
+    assert "Press p for the full prompt." in rendered
+    assert "**" not in rendered
+
+
+def test_compose_task_with_chat_adds_recent_notes() -> None:
+    task = "fix the auth issue"
+    chat_history = [
+        ChatMessage(role="user", text="Don't touch oauth.py."),
+        ChatMessage(role="assistant", text="I can do a minimal fix."),
+    ]
+
+    composed = compose_task_with_chat(task, chat_history)
+
+    assert "fix the auth issue" in composed
+    assert "Session chat:" in composed
+    assert "You: Don't touch oauth.py." in composed
+    assert "Aethr: I can do a minimal fix." in composed
+
+
+def test_build_chat_lines_show_prompt_and_input() -> None:
+    config = WorkflowConfig(
+        workflow="tui",
+        roles={"reviewer": "Review."},
+        models={"reviewer": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="review", role="reviewer")],
+    )
+    state = type("State", (), {})()
+    state.task = "fix the bug"
+    state.config = config
+    state.results = []
+    state.stream_enabled = True
+    state.prompt_visible = True
+    state.status = "Type a note and press Enter to run the current step."
+    state.current_step = None
+    state.live_output = ""
+    state.last_result = None
+    state.chat_history = [ChatMessage(role="user", text="avoid snapshot changes")]
+    state.input_buffer = "review the auth flow"
+
+    lines = build_chat_lines(state, 80)
+
+    rendered = "\n".join(lines)
+    assert "avoid snapshot changes" in rendered
+    assert "Compose:" in rendered
+    assert "review the auth flow" in rendered
+
+
+def test_build_stream_lines_show_live_output() -> None:
+    config = WorkflowConfig(
+        workflow="tui",
+        roles={"reviewer": "Review."},
+        models={"reviewer": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="review", role="reviewer")],
+    )
+    state = TuiState(task="fix the bug", config=config, live_output="Streaming implement...\nDone.")
+    state.status = "Streaming review..."
+
+    lines = build_stream_lines(state, 80)
+
+    rendered = "\n".join(lines)
+    assert "OpenCode output:" in rendered
+    assert "Streaming implement..." in rendered
+    assert "Done." in rendered

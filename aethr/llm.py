@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
-from dotenv import find_dotenv, load_dotenv
+from aethr.env import load_project_dotenv
 
 ChunkCallback = Callable[[str], None]
 
@@ -55,9 +55,7 @@ class ModelClient:
     """Minimal model client used by workflow steps."""
 
     def __init__(self, model: str | None = None) -> None:
-        dotenv_path = find_dotenv(usecwd=True)
-        if dotenv_path:
-            load_dotenv(dotenv_path, override=False)
+        load_project_dotenv()
         self.requested_model = os.getenv("AETHR_MODEL") or model
         self.model = normalize_model_name(self.requested_model)
         self.live = os.getenv("AETHR_LIVE") == "1" or os.getenv("AETHR_MODEL") is not None
