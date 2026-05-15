@@ -20,6 +20,14 @@ task + workflow + explicit context + model routing
 
 Aethr is stateless. The only project file it creates is `.aethr.yaml`.
 
+## Requirements
+
+- Python 3.12+ (`3.12` and `3.13` are tested; older versions are not supported)
+- `git` available in your shell
+- Platform: works on macOS, Linux, and Windows (including WSL) when the
+  Python and `git` requirements are met
+- Optional: `opencode` CLI for implementation steps that edit files
+
 ## Install
 
 ```bash
@@ -31,6 +39,48 @@ For local development:
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Command Cheat Sheet
+
+### Initialize a workflow preset (`aethr init`)
+
+```bash
+aethr init plan-implement-review
+```
+
+Creates `.aethr.yaml` from the named built-in preset.
+
+### Run a workflow with an inline task (`aethr run "..."`)
+
+```bash
+aethr run "add support for loading .env files"
+```
+
+Runs the configured workflow immediately with the provided task.
+
+### Open your editor and continue interactively (`aethr run`)
+
+```bash
+aethr run
+```
+
+Opens your editor for task entry, then starts the workflow.
+
+### Preview prompts without calling models (`--show-prompt`)
+
+```bash
+aethr run "review my current changes" --show-prompt
+```
+
+Renders step prompts without making model/API calls.
+
+### Check version (`aethr version`)
+
+```bash
+aethr version
+```
+
+Prints the installed Aethr version and exits.
 
 ## Quickstart
 
@@ -265,6 +315,55 @@ Supported providers in the helper are:
 - `google` / `gemini`
 - `openrouter`
 - `xai`
+
+## Development
+
+### Run tests
+
+Tests live in `tests/` and use `pytest` conventions (`test_*.py` modules and
+`test_*` functions). Add new tests next to the behavior they cover.
+
+Set up a local test environment first:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+On Windows PowerShell, activate with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Run the full suite:
+
+```bash
+pytest
+```
+
+Run a specific test module:
+
+```bash
+pytest tests/test_workflow.py
+```
+
+### Run the CLI from source
+
+Use this when iterating on local changes without reinstalling the package.
+It executes the CLI entrypoint directly from your working tree.
+
+```bash
+python -m aethr.cli --help
+```
+
+Useful follow-up commands from source:
+
+```bash
+python -m aethr.cli init --list
+python -m aethr.cli run "review my current changes"
+```
 
 ## Philosophy
 
