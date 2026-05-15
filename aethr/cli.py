@@ -5,40 +5,30 @@ from __future__ import annotations
 import re
 import shlex
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich import box
-from rich.live import Live
 from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
 from aethr import __version__
 from aethr.auth import env_var_for, login as auth_login, status as auth_status
-from aethr.artifacts import format_artifact_block, format_artifact_summary
 from aethr.config import CONFIG_FILE, ConfigError, load_workflow_config
 from aethr.executor import (
-    StepPrompt,
     StepResult,
     WorkflowStepError,
-    build_step_prompt,
     build_workflow_prompts,
-    format_token_count,
     load_checkpoint,
-    run_repeat_block,
-    run_step,
-    workflow_cursor,
     run_workflow,
     serialize_checkpoint,
     summarize_results,
     validate_checkpoint,
 )
 from aethr.llm import LLMError
-from aethr.render import clean_display_text
+from aethr import session as terminal_session
+from aethr.tui import run_tui_workflow
 from aethr.workflow import WorkflowTemplateError, available_workflows, init_workflow
 
 
@@ -46,19 +36,6 @@ app = typer.Typer(help="Explicit, reproducible AI coding workflows.")
 console = Console()
 auth_app = typer.Typer(help="Manage project-local API key credentials.")
 app.add_typer(auth_app, name="auth")
-
-
-@dataclass
-class _StreamRenderState:
-    """Live render state for one streaming step."""
-
-    step_id: str
-    content: str = ""
-    live: Live | None = None
-
-
-_STREAM_RENDERING_ENABLED = False
-_ACTIVE_STREAM: _StreamRenderState | None = None
 
 
 @app.callback()
@@ -99,10 +76,6 @@ def init(
 @app.command()
 def run(
     task: Annotated[str, typer.Argument(help="Coding task to run through the pipeline.")],
-    interactive: Annotated[
-        bool,
-        typer.Option("--interactive/--headless", help="Run as an interactive terminal session."),
-    ] = False,
     show_prompt: Annotated[
         bool,
         typer.Option("--show-prompt", help="Print exact step prompts without calling models."),
@@ -135,29 +108,8 @@ def run(
     previous_results = _load_resume_results(resume_checkpoint, config)
     if previous_results:
         console.print(f"[dim]Resuming from {len(previous_results)} completed step(s).[/dim]")
-    render_workflow_overview(config, previous_results=previous_results)
-    _set_stream_rendering_enabled(stream)
-
-    if interactive:
-        try:
-            results = _run_interactive_workflow(
-                task,
-                config,
-                previous_results=previous_results,
-                stream=stream,
-            )
-        except LLMError as exc:
-            _stop_stream_render()
-            raise typer.BadParameter(str(exc)) from exc
-        except WorkflowStepError as exc:
-            _stop_stream_render()
-            _print_workflow_failure(task, exc, verbose=verbose)
-            raise typer.Exit(code=1) from exc
-        finally:
-            _set_stream_rendering_enabled(False)
-
-        console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
-        return
+    terminal_session.render_workflow_overview(config, previous_results=previous_results)
+    terminal_session.set_stream_rendering_enabled(stream)
 
     if show_prompt:
         console.print("[bold]Mode[/bold] prompt preview")
@@ -166,8 +118,8 @@ def run(
             console.print("[green]No remaining steps to preview[/green]")
             return
         for index, planned in enumerate(prompts, start=len(previous_results) + 1):
-            _print_step_start(index, len(config.steps), planned)
-            _print_step_prompt(planned)
+            terminal_session.print_step_start(index, len(config.steps), planned)
+            terminal_session.print_step_prompt(planned)
         console.print("[green]Prompt preview complete[/green]")
         return
 
@@ -176,19 +128,56 @@ def run(
             task,
             config,
             previous_results=previous_results,
-            on_step_start=_print_step_start,
-            on_step_chunk=_print_step_chunk if stream else None,
-            on_step_result=_print_step_status if stream else _print_step_result,
+            on_step_start=terminal_session.print_step_start,
+            on_step_chunk=terminal_session.print_step_chunk if stream else None,
+            on_step_result=terminal_session.print_step_status if stream else terminal_session.print_step_result,
         )
     except LLMError as exc:
-        _stop_stream_render()
+        terminal_session.stop_stream_render()
         raise typer.BadParameter(str(exc)) from exc
     except WorkflowStepError as exc:
-        _stop_stream_render()
+        terminal_session.stop_stream_render()
         _print_workflow_failure(task, exc, verbose=verbose)
         raise typer.Exit(code=1) from exc
     finally:
-        _set_stream_rendering_enabled(False)
+        terminal_session.set_stream_rendering_enabled(False)
+
+    console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
+
+
+@app.command()
+def tui(
+    task: Annotated[str, typer.Argument(help="Coding task to run through the TUI.")],
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Print the full checkpoint JSON on failure."),
+    ] = False,
+    resume_checkpoint: Annotated[
+        str | None,
+        typer.Option(
+            "--resume-checkpoint",
+            help="JSON array or @file with previously completed step results.",
+        ),
+    ] = None,
+) -> None:
+    """Run the configured workflow inside a full-screen terminal UI."""
+
+    try:
+        config = load_workflow_config()
+    except ConfigError as exc:
+        raise typer.BadParameter(f"{exc}. Run 'aethr init' to create {CONFIG_FILE}.") from exc
+
+    previous_results = _load_resume_results(resume_checkpoint, config)
+
+    try:
+        results = run_tui_workflow(task, config, previous_results=previous_results)
+    except LLMError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except WorkflowStepError as exc:
+        _print_workflow_failure(task, exc, verbose=verbose)
+        raise typer.Exit(code=1) from exc
 
     console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
 
@@ -242,283 +231,6 @@ def login(
     console.print(f"[green]Stored[/green] {env_var} in [bold]{path}[/bold]")
 
 
-def _print_step_start(index: int, total: int, planned: StepPrompt) -> None:
-    """Print a compact header before a step begins."""
-
-    _stop_stream_render()
-    backend = planned.metadata.get("backend", "model")
-    backend_text = f" backend={backend}" if backend != "model" else ""
-    permissions_text = _permissions_suffix(planned.metadata)
-    details = Table.grid(expand=True, padding=(0, 1))
-    details.add_column(ratio=1)
-    details.add_column(ratio=2)
-    details.add_row(
-        f"[bold cyan]{index}/{total}[/bold cyan] [bold]{planned.step_id}[/bold]",
-        f"[dim]role={planned.metadata['role']} model={planned.metadata['model']}{backend_text} "
-        f"context={planned.metadata['context_sources']}{permissions_text}[/dim]",
-    )
-    console.print()
-    console.print(Panel(details, border_style="cyan", box=box.SIMPLE))
-    if _STREAM_RENDERING_ENABLED:
-        _start_stream_render(planned.step_id)
-
-
-def _print_step_chunk(_step_id: str, chunk: str) -> None:
-    """Stream a chunk of model output."""
-
-    if _append_stream_chunk(chunk):
-        return
-    cleaned = _clean_display_text(chunk)
-    if cleaned:
-        console.print(cleaned, end="", markup=False)
-
-
-def _print_step_result(result: StepResult) -> None:
-    """Print one in-memory step result."""
-
-    console.print()
-    body = clean_display_text(result.content)
-    renderable = Text(body or "[no content]")
-    console.print(Panel(renderable, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
-
-    if result.artifacts is not None:
-        console.print(
-            Panel(
-                Text(format_artifact_summary(result.artifacts)),
-                title=f"{result.step_id} artifacts",
-                border_style="cyan",
-                box=box.SIMPLE,
-            )
-        )
-
-
-def _clean_display_text(text: str) -> str:
-    """Backward-compatible shim for shared rendering helper."""
-
-    return clean_display_text(text)
-
-
-def _set_stream_rendering_enabled(enabled: bool) -> None:
-    """Toggle live stream rendering for the current run."""
-
-    global _STREAM_RENDERING_ENABLED
-    _STREAM_RENDERING_ENABLED = enabled
-
-
-def _start_stream_render(step_id: str) -> None:
-    """Start a live rendered box for streaming output."""
-
-    global _ACTIVE_STREAM
-    _stop_stream_render()
-    state = _StreamRenderState(step_id=step_id)
-    state.live = Live(_stream_panel(state), console=console, refresh_per_second=12, transient=False)
-    state.live.__enter__()
-    _ACTIVE_STREAM = state
-
-
-def _append_stream_chunk(chunk: str) -> bool:
-    """Append a chunk to the active live stream, if any."""
-
-    if _ACTIVE_STREAM is None or _ACTIVE_STREAM.live is None:
-        return False
-
-    _ACTIVE_STREAM.content += chunk
-    _ACTIVE_STREAM.live.update(_stream_panel(_ACTIVE_STREAM))
-    return True
-
-
-def _stop_stream_render() -> None:
-    """Stop the active live stream, preserving its last rendered state."""
-
-    global _ACTIVE_STREAM
-    if _ACTIVE_STREAM is None or _ACTIVE_STREAM.live is None:
-        _ACTIVE_STREAM = None
-        return
-
-    _ACTIVE_STREAM.live.__exit__(None, None, None)
-    _ACTIVE_STREAM = None
-
-
-def _stream_panel(state: _StreamRenderState) -> Panel:
-    """Render the current streaming buffer as a boxed markdown panel."""
-
-    body = _clean_display_text(state.content)
-    renderable = Text(body) if body else Text("waiting for output...", style="dim")
-    return Panel(renderable, title=f"{state.step_id} streaming", border_style="green", box=box.SIMPLE)
-
-
-def _print_step_status(result: StepResult) -> None:
-    """Print a compact completion line after a streamed step."""
-
-    if _ACTIVE_STREAM is not None and _ACTIVE_STREAM.step_id == result.step_id:
-        if result.content.strip():
-            _ACTIVE_STREAM.content = result.content
-        _stop_stream_render()
-
-    usage = ""
-    if result.usage is not None and (result.usage.total_tokens or result.usage.cost):
-        usage = f" [dim]{format_token_count(result.usage.total_tokens)} ${result.usage.cost:.2f}[/dim]"
-
-    backend = result.metadata.get("backend", "model")
-    backend_text = f" backend={backend}" if backend != "model" else ""
-    permissions_text = _permissions_suffix(result.metadata)
-    loop_status = _loop_suffix(result.metadata)
-    console.print()
-    console.print(
-        f"[green]✓[/green] [bold]{result.step_id}[/bold] "
-        f"[dim]role={result.metadata['role']} model={result.metadata['model']}{backend_text}"
-        f"{permissions_text}{loop_status}[/dim]{usage}"
-    )
-
-
-def _print_step_prompt(planned: StepPrompt) -> None:
-    """Print one planned prompt."""
-
-    console.print(Panel(Text(planned.prompt), title=f"{planned.step_id} prompt", border_style="yellow", box=box.SIMPLE))
-
-
-def _run_interactive_workflow(
-    task: str,
-    config,
-    previous_results: list[StepResult],
-    *,
-    stream: bool,
-) -> list[StepResult]:
-    """Run the workflow one step at a time with terminal prompts."""
-
-    results = list(previous_results)
-    result_callback = _print_step_status if stream else _print_step_result
-    while True:
-        step_index = workflow_cursor(results, config)
-        if step_index >= len(config.steps):
-            return results
-
-        step = config.steps[step_index]
-        planned = build_step_prompt(task, step, config, results)
-        _print_interactive_step_preview(step_index, len(config.steps), planned)
-
-        action = typer.prompt("Action [run/prompt/quit]", default="run").strip().lower()
-        if action in {"q", "quit", "exit"}:
-            console.print("[yellow]Session stopped[/yellow]")
-            return results
-        if action in {"p", "prompt", "show"}:
-            _print_step_prompt(planned)
-            continue
-        if action not in {"r", "run", ""}:
-            console.print("[yellow]Unknown action.[/yellow]")
-            continue
-
-        _print_step_start(step_index + 1, len(config.steps), planned)
-        result = run_step(
-            task,
-            step,
-            config,
-            results,
-            planned=planned,
-            on_chunk=_print_step_chunk if stream else None,
-        )
-        results.append(result)
-        result_callback(result)
-
-        if step.repeat is not None:
-            results = run_repeat_block(
-                task,
-                step_index,
-                step,
-                config,
-                results,
-                on_step_start=_print_step_start,
-                on_step_chunk=_print_step_chunk if stream else None,
-                on_step_result=result_callback,
-            )
-
-        if workflow_cursor(results, config) >= len(config.steps):
-            return results
-
-        if not typer.confirm("Continue to next step?", default=True):
-            console.print("[yellow]Session stopped[/yellow]")
-            return results
-
-
-def _print_interactive_step_preview(index: int, total: int, planned: StepPrompt) -> None:
-    """Print a compact preview before a step is run."""
-
-    backend = planned.metadata.get("backend", "model")
-    permissions_text = _permissions_suffix(planned.metadata)
-    details = Table.grid(expand=True, padding=(0, 1))
-    details.add_column(ratio=1)
-    details.add_column(ratio=2)
-    details.add_row(
-        f"[bold cyan]{index}/{total}[/bold cyan] [bold]{planned.step_id}[/bold]",
-        f"[dim]role={planned.metadata['role']} model={planned.metadata['model']}"
-        f"{f' backend={backend}' if backend != 'model' else ''} "
-        f"context={planned.metadata['context_sources']}{permissions_text}[/dim]",
-    )
-    preview = _prompt_excerpt(planned.prompt)
-    console.print()
-    console.print(Panel(details, border_style="magenta", box=box.SIMPLE))
-    console.print(Panel(Text(preview), title="Prompt preview", border_style="yellow", box=box.SIMPLE))
-
-
-def _prompt_excerpt(prompt: str, line_limit: int = 16) -> str:
-    """Trim a full prompt to a readable preview."""
-
-    lines = clean_display_text(prompt).splitlines()
-    if len(lines) <= line_limit:
-        return "\n".join(lines)
-    return "\n".join(lines[:line_limit] + ["…", "Type `prompt` to inspect the full text."])
-
-
-def render_workflow_overview(config, previous_results: list[StepResult] | None = None) -> None:
-    """Render a compact step overview before execution starts."""
-
-    completed = {result.step_id for result in (previous_results or [])}
-    current_index = workflow_cursor(list(previous_results or []), config)
-    table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold cyan", expand=True)
-    table.add_column("#", style="dim", width=4)
-    table.add_column("Step", style="bold")
-    table.add_column("Role")
-    table.add_column("Backend")
-    table.add_column("Perms", width=8)
-    table.add_column("Model")
-    table.add_column("Ctx", justify="right", width=4)
-    table.add_column("Hist", width=8)
-    table.add_column("Loop", width=18)
-    table.add_column("State", width=10)
-
-    for index, step in enumerate(config.steps):
-        if step.id in completed:
-            state = "[green]done[/green]"
-        elif index == current_index:
-            state = "[yellow]current[/yellow]"
-        else:
-            state = "[dim]pending[/dim]"
-
-        backend = step.backend if step.backend != "model" else "model"
-        permissions = ""
-        if step.backend == "opencode":
-            permissions = "unsafe" if step.unsafe_permissions else "safe"
-        history = step.history_visibility
-        loop = ""
-        if step.repeat is not None:
-            loop = f"{step.repeat.back_to}→{step.id} x{step.repeat.max_iterations}"
-        model = config.models.get(step.role, "mock")
-        table.add_row(
-            str(index + 1),
-            step.id,
-            step.role,
-            backend,
-            permissions,
-            model,
-            str(len(step.context)),
-            history,
-            loop,
-            state,
-        )
-
-    console.print(Panel(table, title="Workflow map", border_style="blue", box=box.ROUNDED))
-
-
 def _permissions_suffix(metadata: dict[str, str]) -> str:
     """Render permission mode for agent-backed steps."""
 
@@ -526,19 +238,6 @@ def _permissions_suffix(metadata: dict[str, str]) -> str:
     if not permissions:
         return ""
     return f" permissions={permissions}"
-
-
-def _loop_suffix(metadata: dict[str, str]) -> str:
-    """Render loop outcome metadata for controller steps."""
-
-    status = metadata.get("loop_status")
-    if not status:
-        return ""
-    iterations = metadata.get("loop_iterations", "")
-    suffix = f" loop={status}"
-    if iterations:
-        suffix += f"x{iterations}"
-    return f" {suffix}"
 
 
 def _load_resume_results(resume_checkpoint: str | None, config) -> list[StepResult]:

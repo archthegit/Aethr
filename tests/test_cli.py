@@ -15,7 +15,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.11" in result.output
+    assert "Aethr 0.1.12" in result.output
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:
@@ -378,35 +378,6 @@ def test_run_no_stream_renders_markdown_without_literal_markup(monkeypatch) -> N
     assert "**Low Severity**" not in result.output
 
 
-def test_run_interactive_renders_prompt_preview_and_result(monkeypatch) -> None:
-    runner = CliRunner()
-    config = WorkflowConfig(
-        workflow="interactive",
-        roles={"planner": "Plan."},
-        models={"planner": "openai:gpt-4o-mini"},
-        steps=[WorkflowStep(id="plan", role="planner")],
-    )
-
-    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
-    monkeypatch.setattr(
-        "aethr.cli.run_step",
-        lambda task, step, config, previous_results, planned=None, on_chunk=None: StepResult(
-            step_id=step.id,
-            content="### Implementation Plan\n\n**Objective:** fix the bug.",
-            metadata={"role": "planner", "model": "openai:gpt-4o-mini", "context_sources": "0"},
-        ),
-    )
-    monkeypatch.setattr("aethr.cli.typer.prompt", lambda *args, **kwargs: "run")
-
-    result = runner.invoke(app, ["run", "fix the bug", "--interactive", "--no-stream"])
-
-    assert result.exit_code == 0
-    assert "Prompt preview" in result.output
-    assert "Implementation Plan" in result.output
-    assert "Objective: fix the bug." in result.output
-    assert "**" not in result.output
-
-
 def test_run_streams_bracketed_chunks_without_markup(monkeypatch) -> None:
     runner = CliRunner()
     config = WorkflowConfig(
@@ -440,6 +411,24 @@ def test_run_streams_bracketed_chunks_without_markup(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "[/tmp/checkpoint folder/with spaces.json]" in result.output
     assert "<tag>plain text</tag>" in result.output
+
+
+def test_tui_command_invokes_runner(monkeypatch) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="tui",
+        roles={"reviewer": "Review."},
+        models={"reviewer": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="review", role="reviewer")],
+    )
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr("aethr.cli.run_tui_workflow", lambda *args, **kwargs: [])
+
+    result = runner.invoke(app, ["tui", "review my changes"])
+
+    assert result.exit_code == 0
+    assert "Workflow complete" in result.output
 
 
 def test_run_streams_markdown_chunks_without_literal_markup(monkeypatch) -> None:
