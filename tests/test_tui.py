@@ -8,6 +8,7 @@ from aethr.tui import (
     build_stream_lines,
     build_workflow_map_lines,
     compose_task_with_chat,
+    _rewind_and_run_current_step,
 )
 
 
@@ -90,7 +91,7 @@ def test_compose_task_with_chat_adds_recent_notes() -> None:
     composed = compose_task_with_chat(task, chat_history)
 
     assert "fix the auth issue" in composed
-    assert "Session chat:" in composed
+    assert "Session steering:" in composed
     assert "You: Don't touch oauth.py." in composed
     assert "Aethr: I can do a minimal fix." in composed
 
@@ -108,7 +109,7 @@ def test_build_chat_lines_show_prompt_and_input() -> None:
     state.results = []
     state.stream_enabled = True
     state.prompt_visible = True
-    state.status = "Type a note and press Enter to run the current step."
+    state.status = "Type a steering note and press Enter to run the current step."
     state.current_step = None
     state.live_output = ""
     state.last_result = None
@@ -119,8 +120,42 @@ def test_build_chat_lines_show_prompt_and_input() -> None:
 
     rendered = "\n".join(lines)
     assert "avoid snapshot changes" in rendered
+    assert "Steering:" in rendered
     assert "Compose:" in rendered
     assert "review the auth flow" in rendered
+
+
+def test_rewind_and_run_current_step_reruns_last_completed_step(monkeypatch) -> None:
+    config = WorkflowConfig(
+        workflow="tui",
+        roles={"reviewer": "Review.", "implementer": "Implement."},
+        models={"reviewer": "openai:gpt-4o-mini", "implementer": "openai:gpt-5.3-codex"},
+        steps=[
+            WorkflowStep(id="review", role="reviewer"),
+            WorkflowStep(id="implement", role="implementer", backend="opencode"),
+        ],
+    )
+    state = TuiState(task="fix the bug", config=config)
+    state.results = [
+        StepResult(step_id="review", content="old result"),
+        StepResult(step_id="implement", content="new result"),
+    ]
+    state.last_result = state.results[-1]
+
+    called: list[int] = []
+
+    def fake_run_step_at_index(stdscr, current_state, step_index):
+        called.append(step_index)
+        return False
+
+    monkeypatch.setattr("aethr.tui._run_step_at_index", fake_run_step_at_index)
+
+    _rewind_and_run_current_step(None, state)
+
+    assert len(state.results) == 1
+    assert state.results[0].content == "old result"
+    assert state.last_result.content == "old result"
+    assert called == [1]
 
 
 def test_build_stream_lines_show_live_output() -> None:

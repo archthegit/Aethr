@@ -22,7 +22,7 @@ from aethr.render import clean_display_text
 
 @dataclass(frozen=True)
 class ChatMessage:
-    """One user or assistant message in the workflow session chat."""
+    """One user or assistant message in the workflow steering log."""
 
     role: str
     text: str
@@ -37,7 +37,7 @@ class TuiState:
     results: list[StepResult] = field(default_factory=list)
     stream_enabled: bool = True
     prompt_visible: bool = False
-    status: str = "Type a note and press Enter to run the current step."
+    status: str = "Type a steering note and press Enter to re-run the current step."
     current_step: StepPrompt | None = None
     live_output: str = ""
     last_result: StepResult | None = None
@@ -63,12 +63,12 @@ def run_tui_workflow(
 
 
 def compose_task_with_chat(task: str, chat_history: list[ChatMessage], *, limit: int = 8) -> str:
-    """Add recent chat messages to the task context for prompt building."""
+    """Add recent steering notes to the task context for prompt building."""
 
     if not chat_history:
         return task
 
-    lines = [task, "", "Session chat:"]
+    lines = [task, "", "Session steering:"]
     for message in chat_history[-limit:]:
         label = "You" if message.role == "user" else "Aethr"
         lines.append(f"{label}: {clean_display_text(message.text).strip()}")
@@ -154,21 +154,21 @@ def build_stream_lines(state: TuiState, width: int) -> list[str]:
 
 
 def build_chat_lines(state: TuiState, width: int) -> list[str]:
-    """Build the transcript and composer lines for the bottom chat pane."""
+    """Build the transcript and composer lines for the bottom steering pane."""
 
     lines = [state.status, ""]
     lines.append("Keys: Enter send/run | p prompt | /clear | /quit")
     lines.append("")
     transcript = state.chat_history[-6:]
     if transcript:
-        lines.append("Chat:")
+        lines.append("Steering:")
         for message in transcript:
             label = "You" if message.role == "user" else "Aethr"
             lines.append(f"{label}:")
             lines.extend(_wrap_block(message.text, width))
             lines.append("")
     else:
-        lines.append("Chat:")
+        lines.append("Steering:")
         lines.append("Type a note and press Enter to steer the current step.")
         lines.append("")
 
@@ -182,7 +182,6 @@ def _run_curses_session(stdscr: curses.window, state: TuiState) -> None:
 
     curses.curs_set(1)
     curses.use_default_colors()
-    _init_colors()
     stdscr.keypad(True)
 
     while True:
@@ -235,7 +234,7 @@ def _handle_key(stdscr: curses.window, state: TuiState, planned: StepPrompt | No
 
     if key and len(key) == 1 and key.isprintable():
         state.input_buffer += key
-        state.status = "Type Enter to send the note."
+        state.status = "Type Enter to send the steering note."
         _render(stdscr, state, planned)
         return False
 
@@ -266,7 +265,7 @@ def _submit_input(stdscr: curses.window, state: TuiState, planned: StepPrompt | 
             return False
         if command in {"clear", "c"}:
             state.chat_history.clear()
-            state.status = "Chat cleared."
+            state.status = "Steering cleared."
             _render(stdscr, state, planned)
             return False
         state.status = f"Unknown command: {text}"
@@ -275,9 +274,9 @@ def _submit_input(stdscr: curses.window, state: TuiState, planned: StepPrompt | 
 
     if text:
         state.chat_history.append(ChatMessage(role="user", text=text))
-        state.status = "Note added. Running the current step..."
+        state.status = "Steering note added. Re-running the last completed step..."
         _render(stdscr, state, planned)
-        return _run_current_step(stdscr, state)
+        return _rewind_and_run_current_step(stdscr, state)
 
     if planned is not None:
         state.status = "Running the current step..."
@@ -290,9 +289,15 @@ def _submit_input(stdscr: curses.window, state: TuiState, planned: StepPrompt | 
 
 
 def _run_current_step(stdscr: curses.window, state: TuiState) -> bool:
-    """Run the currently selected step with the accumulated chat context."""
+    """Run the currently selected step with the accumulated steering context."""
 
     step_index = workflow_cursor(state.results, state.config)
+    return _run_step_at_index(stdscr, state, step_index)
+
+
+def _run_step_at_index(stdscr: curses.window, state: TuiState, step_index: int) -> bool:
+    """Run a specific workflow step by index."""
+
     if step_index >= len(state.config.steps):
         state.status = "Workflow complete. Type /quit or q to exit."
         _render(stdscr, state, None)
@@ -335,9 +340,32 @@ def _run_current_step(stdscr: curses.window, state: TuiState) -> bool:
         state.live_output = state.last_result.content
         state.chat_history.append(ChatMessage(role="assistant", text=_summarize_result_for_chat(state.last_result)))
 
-    state.status = "Step complete. Type another note or press Enter to continue."
+    state.status = "Step complete. Type another steering note or press Enter to continue."
     _render(stdscr, state, planned)
     return False
+
+
+def _rewind_and_run_current_step(stdscr: curses.window, state: TuiState) -> bool:
+    """Rewind one completed step and run it again with the new steering note."""
+
+    step_id = state.last_result.step_id if state.last_result is not None else None
+    if state.results:
+        state.results.pop()
+    state.last_result = state.results[-1] if state.results else None
+
+    if step_id is None:
+        state.status = "No completed step available to re-run."
+        _render(stdscr, state, state.current_step)
+        return False
+
+    try:
+        step_index = next(index for index, step in enumerate(state.config.steps) if step.id == step_id)
+    except StopIteration:
+        state.status = f"Unknown step to re-run: {step_id}"
+        _render(stdscr, state, state.current_step)
+        return False
+
+    return _run_step_at_index(stdscr, state, step_index)
 
 
 def _summarize_result_for_chat(result: StepResult) -> str:
@@ -401,7 +429,6 @@ def _render(stdscr: curses.window, state: TuiState, planned: StepPrompt | None) 
         width,
         "Workflow map",
         map_lines,
-        color=curses.color_pair(1),
     )
 
     detail_lines = ["No step selected."]
@@ -421,7 +448,6 @@ def _render(stdscr: curses.window, state: TuiState, planned: StepPrompt | None) 
         width,
         "Current step",
         detail_lines,
-        color=curses.color_pair(2),
     )
 
     stream_y = map_height + detail_height + 2
@@ -437,7 +463,6 @@ def _render(stdscr: curses.window, state: TuiState, planned: StepPrompt | None) 
         width,
         stream_title,
         build_stream_lines(state, max(20, width - 4)),
-        color=curses.color_pair(3),
     )
 
     _draw_chat_box(
@@ -469,12 +494,13 @@ def _draw_chat_box(
 
     win = stdscr.derwin(height, width, y, x)
     win.erase()
-    win.attron(curses.color_pair(3))
-    win.attron(curses.A_BOLD)
+    win.bkgd(" ", curses.A_REVERSE)
+    win.attron(curses.A_REVERSE)
+    win.attron(curses.A_DIM)
     win.box()
-    win.addnstr(0, 2, " Chat ", max(0, width - 4))
-    win.attroff(curses.A_BOLD)
-    win.attroff(curses.color_pair(3))
+    win.addnstr(0, 2, " Steering ", max(0, width - 4))
+    win.attroff(curses.A_DIM)
+    win.attroff(curses.A_REVERSE)
 
     inner_width = max(1, width - 4)
     transcript_height = max(1, height - 3)
@@ -605,17 +631,6 @@ def truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip() + "…"
-
-
-def _init_colors() -> None:
-    """Initialize a small palette for the TUI."""
-
-    if not curses.has_colors():
-        return
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_CYAN, -1)
-    curses.init_pair(2, curses.COLOR_MAGENTA, -1)
-    curses.init_pair(3, curses.COLOR_GREEN, -1)
 
 
 def _read_key(stdscr: curses.window) -> str:
