@@ -15,7 +15,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.10" in result.output
+    assert "Aethr 0.1.11" in result.output
 
 
 def test_run_failure_is_compact(monkeypatch) -> None:
@@ -100,6 +100,45 @@ def test_run_failure_resume_command_quotes_checkpoint_path(monkeypatch) -> None:
     )
 
 
+def test_run_failure_resume_command_matches_shlex_join(monkeypatch) -> None:
+    runner = CliRunner()
+    checkpoint_path = "/tmp/checkpoint with 'quote'.json"
+    task = "add support for loading .env files"
+    config = WorkflowConfig(
+        workflow="plan-implement-review",
+        roles={"planner": "Plan.", "implementer": "Implement.", "reviewer": "Review."},
+        models={
+            "planner": "openai:gpt-4o-mini",
+            "implementer": "openai:gpt-5.3-codex",
+            "reviewer": "openai:gpt-4o-mini",
+        },
+        steps=[
+            WorkflowStep(id="plan", role="planner"),
+            WorkflowStep(id="implement", role="implementer"),
+            WorkflowStep(id="review", role="reviewer"),
+        ],
+    )
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr("aethr.cli.write_checkpoint_file", lambda checkpoint: checkpoint_path)
+    monkeypatch.setattr(
+        "aethr.cli.run_workflow",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            WorkflowStepError(
+                "implement",
+                [StepResult(step_id="plan", content="seed")],
+                LLMError("Model call failed for 'anthropic/claude-sonnet-4-20250514': missing key"),
+            )
+        ),
+    )
+
+    result = runner.invoke(app, ["run", task])
+
+    assert result.exit_code == 1
+    resume_command = _extract_resume_command(result.output)
+    assert resume_command == shlex.join(["aethr", "run", task, "--resume-checkpoint", f"@{checkpoint_path}"])
+
+
 @pytest.mark.parametrize(
     "checkpoint_path",
     [
@@ -169,6 +208,9 @@ def _extract_resume_command(output: str) -> str:
         "Model call failed for 'openai/gpt-4o-mini': Incorrect API key provided",
         "Model call failed for 'openai/gpt-4o-mini': Unauthorized: invalid API key",
         "Model call failed for 'openai/gpt-4o-mini': invalid API key; missing key in previous request",
+        "Model call failed for 'openai/gpt-4o-mini': invalid key provided; missing key",
+        "Model call failed for 'openai/gpt-4o-mini': unauthorized because key is expired",
+        "Model call failed for 'openai/gpt-4o-mini': Authentication failed: revoked api key",
     ],
 )
 def test_friendly_failure_reason_does_not_label_invalid_or_expired_keys_as_missing(message: str) -> None:
@@ -215,6 +257,19 @@ def test_friendly_failure_reason_labels_only_true_missing_key_cases(message: str
     )
 
     assert reason == expected
+
+
+def test_friendly_failure_reason_does_not_treat_non_auth_invalid_key_text_as_missing() -> None:
+    message = "Validation failed: invalid key name in schema"
+    reason = friendly_failure_reason(
+        WorkflowStepError(
+            "implement",
+            [],
+            LLMError(message),
+        )
+    )
+
+    assert reason == message
 
 
 def test_run_streams_chunks_and_prints_compact_status(monkeypatch) -> None:
@@ -321,6 +376,35 @@ def test_run_no_stream_renders_markdown_without_literal_markup(monkeypatch) -> N
     assert "Low Severity" in result.output
     assert "**High Severity**" not in result.output
     assert "**Low Severity**" not in result.output
+
+
+def test_run_interactive_renders_prompt_preview_and_result(monkeypatch) -> None:
+    runner = CliRunner()
+    config = WorkflowConfig(
+        workflow="interactive",
+        roles={"planner": "Plan."},
+        models={"planner": "openai:gpt-4o-mini"},
+        steps=[WorkflowStep(id="plan", role="planner")],
+    )
+
+    monkeypatch.setattr("aethr.cli.load_workflow_config", lambda: config)
+    monkeypatch.setattr(
+        "aethr.cli.run_step",
+        lambda task, step, config, previous_results, planned=None, on_chunk=None: StepResult(
+            step_id=step.id,
+            content="### Implementation Plan\n\n**Objective:** fix the bug.",
+            metadata={"role": "planner", "model": "openai:gpt-4o-mini", "context_sources": "0"},
+        ),
+    )
+    monkeypatch.setattr("aethr.cli.typer.prompt", lambda *args, **kwargs: "run")
+
+    result = runner.invoke(app, ["run", "fix the bug", "--interactive", "--no-stream"])
+
+    assert result.exit_code == 0
+    assert "Prompt preview" in result.output
+    assert "Implementation Plan" in result.output
+    assert "Objective: fix the bug." in result.output
+    assert "**" not in result.output
 
 
 def test_run_streams_bracketed_chunks_without_markup(monkeypatch) -> None:

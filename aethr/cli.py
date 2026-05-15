@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import shlex
 import tempfile
-import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
@@ -26,9 +25,12 @@ from aethr.executor import (
     StepPrompt,
     StepResult,
     WorkflowStepError,
+    build_step_prompt,
     build_workflow_prompts,
     format_token_count,
     load_checkpoint,
+    run_repeat_block,
+    run_step,
     workflow_cursor,
     run_workflow,
     serialize_checkpoint,
@@ -36,6 +38,7 @@ from aethr.executor import (
     validate_checkpoint,
 )
 from aethr.llm import LLMError
+from aethr.render import clean_display_text
 from aethr.workflow import WorkflowTemplateError, available_workflows, init_workflow
 
 
@@ -96,6 +99,10 @@ def init(
 @app.command()
 def run(
     task: Annotated[str, typer.Argument(help="Coding task to run through the pipeline.")],
+    interactive: Annotated[
+        bool,
+        typer.Option("--interactive/--headless", help="Run as an interactive terminal session."),
+    ] = False,
     show_prompt: Annotated[
         bool,
         typer.Option("--show-prompt", help="Print exact step prompts without calling models."),
@@ -130,6 +137,27 @@ def run(
         console.print(f"[dim]Resuming from {len(previous_results)} completed step(s).[/dim]")
     render_workflow_overview(config, previous_results=previous_results)
     _set_stream_rendering_enabled(stream)
+
+    if interactive:
+        try:
+            results = _run_interactive_workflow(
+                task,
+                config,
+                previous_results=previous_results,
+                stream=stream,
+            )
+        except LLMError as exc:
+            _stop_stream_render()
+            raise typer.BadParameter(str(exc)) from exc
+        except WorkflowStepError as exc:
+            _stop_stream_render()
+            _print_workflow_failure(task, exc, verbose=verbose)
+            raise typer.Exit(code=1) from exc
+        finally:
+            _set_stream_rendering_enabled(False)
+
+        console.print(f"[green]Workflow complete[/green] ({summarize_results(results)})")
+        return
 
     if show_prompt:
         console.print("[bold]Mode[/bold] prompt preview")
@@ -249,7 +277,7 @@ def _print_step_result(result: StepResult) -> None:
     """Print one in-memory step result."""
 
     console.print()
-    body = _clean_display_text(result.content)
+    body = clean_display_text(result.content)
     renderable = Text(body or "[no content]")
     console.print(Panel(renderable, title=f"{result.step_id} complete", border_style="green", box=box.SIMPLE))
 
@@ -265,36 +293,9 @@ def _print_step_result(result: StepResult) -> None:
 
 
 def _clean_display_text(text: str) -> str:
-    """Remove common markdown markers before rendering terminal output."""
+    """Backward-compatible shim for shared rendering helper."""
 
-    cleaned_lines: list[str] = []
-    in_code_block = False
-
-    for raw_line in textwrap.dedent(text).strip().splitlines():
-        line = raw_line.rstrip()
-        stripped = line.strip()
-
-        if stripped.startswith("```"):
-            in_code_block = not in_code_block
-            continue
-
-        if in_code_block:
-            cleaned_lines.append(line)
-            continue
-
-        heading = re.match(r"^\s{0,3}#{1,6}\s+(.*)$", line)
-        if heading is not None:
-            cleaned_lines.append(heading.group(1).strip())
-            continue
-
-        line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", line)
-        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
-        line = re.sub(r"(?<!\w)\*(.+?)\*(?!\w)", r"\1", line)
-        cleaned_lines.append(line)
-
-    cleaned = "\n".join(cleaned_lines).strip()
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned
+    return clean_display_text(text)
 
 
 def _set_stream_rendering_enabled(enabled: bool) -> None:
@@ -374,6 +375,98 @@ def _print_step_prompt(planned: StepPrompt) -> None:
     """Print one planned prompt."""
 
     console.print(Panel(Text(planned.prompt), title=f"{planned.step_id} prompt", border_style="yellow", box=box.SIMPLE))
+
+
+def _run_interactive_workflow(
+    task: str,
+    config,
+    previous_results: list[StepResult],
+    *,
+    stream: bool,
+) -> list[StepResult]:
+    """Run the workflow one step at a time with terminal prompts."""
+
+    results = list(previous_results)
+    result_callback = _print_step_status if stream else _print_step_result
+    while True:
+        step_index = workflow_cursor(results, config)
+        if step_index >= len(config.steps):
+            return results
+
+        step = config.steps[step_index]
+        planned = build_step_prompt(task, step, config, results)
+        _print_interactive_step_preview(step_index, len(config.steps), planned)
+
+        action = typer.prompt("Action [run/prompt/quit]", default="run").strip().lower()
+        if action in {"q", "quit", "exit"}:
+            console.print("[yellow]Session stopped[/yellow]")
+            return results
+        if action in {"p", "prompt", "show"}:
+            _print_step_prompt(planned)
+            continue
+        if action not in {"r", "run", ""}:
+            console.print("[yellow]Unknown action.[/yellow]")
+            continue
+
+        _print_step_start(step_index + 1, len(config.steps), planned)
+        result = run_step(
+            task,
+            step,
+            config,
+            results,
+            planned=planned,
+            on_chunk=_print_step_chunk if stream else None,
+        )
+        results.append(result)
+        result_callback(result)
+
+        if step.repeat is not None:
+            results = run_repeat_block(
+                task,
+                step_index,
+                step,
+                config,
+                results,
+                on_step_start=_print_step_start,
+                on_step_chunk=_print_step_chunk if stream else None,
+                on_step_result=result_callback,
+            )
+
+        if workflow_cursor(results, config) >= len(config.steps):
+            return results
+
+        if not typer.confirm("Continue to next step?", default=True):
+            console.print("[yellow]Session stopped[/yellow]")
+            return results
+
+
+def _print_interactive_step_preview(index: int, total: int, planned: StepPrompt) -> None:
+    """Print a compact preview before a step is run."""
+
+    backend = planned.metadata.get("backend", "model")
+    permissions_text = _permissions_suffix(planned.metadata)
+    details = Table.grid(expand=True, padding=(0, 1))
+    details.add_column(ratio=1)
+    details.add_column(ratio=2)
+    details.add_row(
+        f"[bold cyan]{index}/{total}[/bold cyan] [bold]{planned.step_id}[/bold]",
+        f"[dim]role={planned.metadata['role']} model={planned.metadata['model']}"
+        f"{f' backend={backend}' if backend != 'model' else ''} "
+        f"context={planned.metadata['context_sources']}{permissions_text}[/dim]",
+    )
+    preview = _prompt_excerpt(planned.prompt)
+    console.print()
+    console.print(Panel(details, border_style="magenta", box=box.SIMPLE))
+    console.print(Panel(Text(preview), title="Prompt preview", border_style="yellow", box=box.SIMPLE))
+
+
+def _prompt_excerpt(prompt: str, line_limit: int = 16) -> str:
+    """Trim a full prompt to a readable preview."""
+
+    lines = clean_display_text(prompt).splitlines()
+    if len(lines) <= line_limit:
+        return "\n".join(lines)
+    return "\n".join(lines[:line_limit] + ["…", "Type `prompt` to inspect the full text."])
 
 
 def render_workflow_overview(config, previous_results: list[StepResult] | None = None) -> None:
@@ -483,7 +576,7 @@ def _print_workflow_failure(task: str, error: WorkflowStepError, *, verbose: boo
 
     checkpoint = serialize_checkpoint(error.completed_results)
     checkpoint_path = write_checkpoint_file(checkpoint)
-    resume_command = shlex.join(["aethr", "run", task, "--resume-checkpoint", f"@{checkpoint_path}"])
+    resume_command = _build_resume_command(task, checkpoint_path)
 
     console.print("[bold]To resume:[/bold]")
     console.print("1. Fix the missing credential or other issue.")
@@ -502,23 +595,9 @@ def friendly_failure_reason(error: WorkflowStepError) -> str:
     message = str(error.cause)
     provider = provider_from_message(message)
     lower = message.lower()
-    if (
-        "invalid_api_key" in lower
-        or "invalid api key" in lower
-        or "incorrect api key" in lower
-        or "api key expired" in lower
-        or "expired api key" in lower
-        or "key expired" in lower
-    ):
+    if _is_invalid_or_expired_api_key_error(lower):
         return message.rstrip(".")
-    if (
-        "api_key client option must be set" in lower
-        or "api key client option must be set" in lower
-        or "missing api key" in lower
-        or "no api key" in lower
-        or "api key is required" in lower
-        or ("missing key" in lower and provider is not None)
-    ):
+    if _is_missing_api_key_error(lower, provider):
         if provider == "anthropic":
             return "Missing Anthropic API key."
         if provider == "openai":
@@ -543,6 +622,60 @@ def provider_from_message(message: str) -> str | None:
     else:
         provider = model
     return provider.lower()
+
+
+def _build_resume_command(task: str, checkpoint_path: str) -> str:
+    """Build a copy/paste-safe resume command for POSIX shells."""
+
+    return shlex.join(["aethr", "run", task, "--resume-checkpoint", f"@{checkpoint_path}"])
+
+
+def _is_missing_api_key_error(message_lower: str, provider: str | None) -> bool:
+    """Detect true missing-key errors while excluding invalid/expired keys."""
+
+    if _is_invalid_or_expired_api_key_error(message_lower):
+        return False
+    if (
+        "api_key client option must be set" in message_lower
+        or "api key client option must be set" in message_lower
+        or "missing api key" in message_lower
+        or "no api key" in message_lower
+        or "api key is required" in message_lower
+    ):
+        return True
+    return "missing key" in message_lower and provider is not None
+
+
+def _is_invalid_or_expired_api_key_error(message_lower: str) -> bool:
+    """Detect invalid/expired key errors and avoid labeling them as missing."""
+
+    direct_markers = (
+        "invalid_api_key",
+        "invalid api key",
+        "incorrect api key",
+        "api key invalid",
+        "api key expired",
+        "expired api key",
+        "revoked api key",
+        "invalid key provided",
+        "key is expired",
+    )
+    if any(marker in message_lower for marker in direct_markers):
+        return True
+
+    has_auth_context = (
+        "api key" in message_lower
+        or "authentication" in message_lower
+        or "unauthorized" in message_lower
+        or "forbidden" in message_lower
+    )
+    if not has_auth_context:
+        return False
+
+    return bool(
+        re.search(r"\b(invalid|incorrect|expired|revoked)\b[^\n]{0,24}\b(api key|key)\b", message_lower)
+        or re.search(r"\b(api key|key)\b[^\n]{0,24}\b(invalid|incorrect|expired|revoked)\b", message_lower)
+    )
 
 
 def write_checkpoint_file(checkpoint: str) -> str:
