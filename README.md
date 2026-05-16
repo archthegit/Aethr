@@ -18,10 +18,6 @@ task + workflow + explicit context + model routing
 
 Aethr is stateless. The only project file it creates is `.aethr.yaml`.
 
-## Demo
-
-[Watch the demo video](demos/demo_v1.mov)
-
 ## Requirements
 
 - Python 3.12+ (`3.12` and `3.13` are tested; older versions are not supported)
