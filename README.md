@@ -20,6 +20,10 @@ task + workflow + explicit context + model routing
 
 Aethr is stateless. The only project file it creates is `.aethr.yaml`.
 
+## Demo
+
+[Watch the demo video](demos/demo_v1.mov)
+
 ## Requirements
 
 - Python 3.12+ (`3.12` and `3.13` are tested; older versions are not supported)
@@ -109,8 +113,29 @@ Aethr copies a YAML preset into `.aethr.yaml`. Edit it like any other project
 file. The default `plan-implement-review` preset uses OpenCode for the
 implementation step, so install the `opencode` CLI if you want that step to
 edit the working tree.
-In that preset, the reviewer reads `latest_diff`, meaning the most recent
-implementation diff rather than the whole repository diff.
+In that preset, the reviewer reads a dedicated `Latest implementation artifact`
+prompt section populated from the most recent implementation step. This keeps
+code review grounded in the actual changed files and diff, not stream prose.
+An implementation artifact is the structured patch payload captured from an
+implementation step: changed files, diff stat, and raw `git diff` text.
+When no implementation artifacts are available yet, the section is rendered as
+`[no implementation artifact]` so reviewers can distinguish "no patch data" from
+"empty step output."
+
+Example `Latest implementation artifact` section:
+
+```text
+Latest implementation artifact:
+--- changed files ---
+- src/app.py
+
+--- diff stat ---
+ src/app.py | 1 +
+
+--- git diff ---
+diff --git a/src/app.py b/src/app.py
++print('hi')
+```
 
 ## How Aethr Works
 
@@ -152,16 +177,25 @@ For real code changes, Aethr can hand an implementation step to OpenCode:
     role: implementer
     backend: opencode
     unsafe_permissions: true
+
+  - id: review
+    role: reviewer
+    history_visibility: none
 ```
 
 That keeps the workflow explicit while letting a real coding agent edit the
 working tree. Leave `unsafe_permissions` off if you want OpenCode to keep its
-normal permission checks.
+normal permission checks. With `history_visibility: none`, the review step sees
+the dedicated latest implementation artifact section (changed files, diff stat,
+and patch) without inheriting full prior stream output. The built-in
+`plan-implement-review` preset intentionally no longer declares
+`context: [latest_diff]` on the review step because this artifact section is now
+always injected into step prompts.
 
 ## Built-In Workflows
 
 - `plan-implement-review`: plan a task, then hand implementation to OpenCode
-  before reviewing the resulting `latest_diff`.
+  before reviewing the latest implementation artifact channel.
 - `review-existing-diff`: review the current working tree diff.
 - `debug-failing-test`: diagnose a failing test, propose a fix, review it.
 - `add-tests`: plan, draft, and review focused test coverage.
@@ -199,14 +233,18 @@ to understand: the YAML shows exactly what each step can see.
 Supported context sources:
 
 - `git_diff`: runs `git diff --no-ext-diff`.
-- `latest_diff`: the most recent implementation diff from the prior step.
+- `latest_diff`: the most recent implementation artifact block from prior step
+  results (changed files, diff stat, and patch).
 - `file:<path>`: reads one UTF-8 file relative to the project root.
 - `glob:<pattern>`: reads matching UTF-8 files relative to the project root,
   with a small content cap.
 
 Use `git_diff` when a step should inspect the whole working tree. Use
 `latest_diff` when a later step should inspect only the most recent
-implementation output from the workflow itself.
+implementation artifact from the workflow itself. This is separate from the
+always-present prompt section named `Latest implementation artifact`, which is
+included for every step and falls back to `[no implementation artifact]` when no
+artifact exists yet.
 
 Example:
 

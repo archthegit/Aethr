@@ -9,4 +9,5 @@ dist/
 .env
 .env.*
 !.env.example
-demos/
+demos/*
+!demos/demo_v1.mov
