@@ -16,7 +16,7 @@ def test_version_command() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "Aethr 0.1.15" in result.output
+    assert "Aethr 1.0.0" in result.output
 
 
 def test_cli_callback_loads_project_dotenv(tmp_path, monkeypatch) -> None:

@@ -4,9 +4,7 @@ A tiny CLI for running explicit AI coding workflows from YAML.
 
 ## Core Idea
 
-Coding with LLMs is not one-shot generation.
-
-Real development is:
+Coding with LLMs is not one-shot generation. Real development is:
 
 ```text
 plan -> implement -> review -> iterate
@@ -44,7 +42,30 @@ For local development:
 pip install -e ".[dev]"
 ```
 
-## Command Cheat Sheet
+## Quick Start
+
+For a review-only workflow:
+
+```bash
+aethr init review-existing-diff
+aethr run "review my current changes before I commit"
+```
+
+If you omit the task entirely, `aethr run` opens your editor first, then starts
+the workflow:
+
+```bash
+aethr run
+```
+
+For a multi-step implementation workflow:
+
+```bash
+aethr init plan-implement-review --force
+aethr run "add support for loading .env files"
+```
+
+## Commands
 
 ### Initialize a workflow preset (`aethr init`)
 
@@ -86,62 +107,11 @@ aethr version
 
 Prints the installed Aethr version and exits.
 
-## Quickstart
-
-For reviewing the current repo:
-
-```bash
-aethr init review-existing-diff
-aethr run "review my current changes before I commit"
-```
-
-If you omit the task entirely, `aethr run` opens your editor first and then
-drops into the interactive session after the first step:
-
-```bash
-aethr run
-```
-
-For a multi-model implementation workflow:
-
-```bash
-aethr init plan-implement-review --force
-aethr run "add support for loading .env files"
-```
-
-Aethr copies a YAML preset into `.aethr.yaml`. Edit it like any other project
-file. The default `plan-implement-review` preset uses OpenCode for the
-implementation step, so install the `opencode` CLI if you want that step to
-edit the working tree.
-In that preset, the reviewer reads a dedicated `Latest implementation artifact`
-prompt section populated from the most recent implementation step. This keeps
-code review grounded in the actual changed files and diff, not stream prose.
-An implementation artifact is the structured patch payload captured from an
-implementation step: changed files, diff stat, and raw `git diff` text.
-When no implementation artifacts are available yet, the section is rendered as
-`[no implementation artifact]` so reviewers can distinguish "no patch data" from
-"empty step output."
-
-Example `Latest implementation artifact` section:
-
-```text
-Latest implementation artifact:
---- changed files ---
-- src/app.py
-
---- diff stat ---
- src/app.py | 1 +
-
---- git diff ---
-diff --git a/src/app.py b/src/app.py
-+print('hi')
-```
-
 ## How Aethr Works
 
-- **Task**: the instruction passed on the command line.
+- **Task**: the instruction you give Aethr.
 - **Workflow**: the YAML file that defines ordered steps.
-- **Steps**: sequential units of work. Aethr runs them in order.
+- **Steps**: sequential units of work, run in order.
 - **Roles**: named responsibilities such as `planner`, `reviewer`, or `writer`.
 - **Context**: explicit repo input declared per step.
 - **Artifacts**: structured implementation output such as changed files and
@@ -149,8 +119,8 @@ diff --git a/src/app.py b/src/app.py
 - **Model routing**: each role can point at a different LiteLLM model.
 
 Each step receives the task, prior step outputs, and its declared context. The
-step result stays in memory, streams to the terminal as it is generated, and
-is printed in a Rich panel when complete.
+step result stays in memory, streams to the terminal as it is generated, and is
+printed in a Rich panel when complete.
 
 ## Example Workflow Config
 
@@ -185,12 +155,7 @@ For real code changes, Aethr can hand an implementation step to OpenCode:
 
 That keeps the workflow explicit while letting a real coding agent edit the
 working tree. Leave `unsafe_permissions` off if you want OpenCode to keep its
-normal permission checks. With `history_visibility: none`, the review step sees
-the dedicated latest implementation artifact section (changed files, diff stat,
-and patch) without inheriting full prior stream output. The built-in
-`plan-implement-review` preset intentionally no longer declares
-`context: [latest_diff]` on the review step because this artifact section is now
-always injected into step prompts.
+normal permission checks.
 
 ## Built-In Workflows
 
@@ -225,6 +190,16 @@ The `examples/` directory contains small workflow files you can copy from:
 These examples intentionally show different providers across roles so you can
 see routing in practice, not just the default presets.
 
+## OpenCode
+
+The default `plan-implement-review` workflow uses OpenCode for implementation.
+Install the `opencode` CLI if you want that step to edit the working tree.
+
+The reviewer then sees the latest implementation artifact from the previous
+implementation step: changed files, diff stat, and raw patch text. When no
+implementation artifact is available yet, Aethr shows a clear placeholder
+instead of pretending there is patch data.
+
 ## Explicit Context
 
 Aethr uses explicit context instead of automatic retrieval. That keeps runs easy
@@ -241,10 +216,7 @@ Supported context sources:
 
 Use `git_diff` when a step should inspect the whole working tree. Use
 `latest_diff` when a later step should inspect only the most recent
-implementation artifact from the workflow itself. This is separate from the
-always-present prompt section named `Latest implementation artifact`, which is
-included for every step and falls back to `[no implementation artifact]` when no
-artifact exists yet.
+implementation artifact from the workflow itself.
 
 Example:
 
